@@ -51,7 +51,7 @@ Configuration (all via environment, sensible defaults for the in-tree layout):
 
 Usage:
   ./run_hil_sweep.py                 # full sweep over every available depth
-  ./run_hil_sweep.py --dry-run       # preflight + bucket histogram, no board
+  ./run_hil_sweep.py --dry-run       # preflight + bucket histogram, no encoding
   ./run_hil_sweep.py --bitness 8 12  # only these depths
   ./run_hil_sweep.py --limit 5       # at most 5 images per bucket (smoke test)
 """
@@ -165,6 +165,115 @@ def wait_for_port(ip, port, timeout=25.0):
     return False
 
 
+# One ssh round-trip that reports everything the sweep needs from the board.
+# Emits "kind:name:value" lines so the host can name the *specific* missing
+# piece instead of inferring one from a dead TCP port.
+PROBE_SH = r"""set -u
+for n in tx rx desc; do
+  d=/sys/class/u-dma-buf/udmabuf-ojls-$n
+  if [ -d "$d" ]; then echo "buf:$n:$(cat "$d/size" 2>/dev/null || echo 0)"
+  else echo "buf:$n:missing"; fi
+done
+for n in 'ojls-tx@10000000' 'ojls-rx@18000000' 'ojls-desc@ffc0000'; do
+  if [ -d "/proc/device-tree/reserved-memory/$n" ]; then echo "rmem:$n:ok"
+  else echo "rmem:$n:missing"; fi
+done
+for n in 'openjls@40000000' 'dma@40400000'; do
+  if [ -d "/proc/device-tree/$n" ]; then echo "dt:$n:ok"; else echo "dt:$n:missing"; fi
+done
+if [ -x @SERVER@/ojls_server ]; then echo "server:bin:ok"; else echo "server:bin:missing"; fi
+if [ -d /sys/class/fpga_manager/fpga0 ]; then echo "fpga:mgr:ok"; else echo "fpga:mgr:missing"; fi
+"""
+
+
+def _mib(n):
+    return f"{n // 1048576} MiB" if n >= 1048576 else f"{n // 1024} KiB"
+
+
+def board_probe(args):
+    """Verify over ssh that the board can actually serve, before we sweep it.
+
+    Every other preflight check is a host-side file. Without this one a sweep
+    passes preflight and then dies ~25 s later inside reload_board() with
+    "server did not open <ip>:<port>" — the symptom of a server that exited at
+    startup, not a cause. The two failure modes that produce it are distinct
+    and have different fixes, so name them apart:
+
+      * boot-time overlay absent (UIO nodes / reserved-memory carveout) ->
+        first-time setup never ran, or U-Boot fell back to a stock boot;
+      * carveout live but no u-dma-buf -> the board was rebooted and the
+        one-shot bring-up has not been re-run. board_reload.sh, the per-depth
+        path the sweep drives, deliberately does not load the module.
+
+    Returns (problems, notes); the caller decides whether problems are fatal.
+    """
+    problems, notes = [], []
+    sh = PROBE_SH.replace("@SERVER@", shlex.quote(args.board_server_dir))
+    cmd = ssh_prefix(args.board, args.ssh_key, args.ssh_opts) + [sh]
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=30)
+    except subprocess.TimeoutExpired:
+        return ([f"board {args.board} did not answer ssh within 30 s\n"
+                 f"    check it is powered and on the network: ping {args.board_ip}"],
+                notes)
+    out = r.stdout.decode(errors="replace").strip()
+    if r.returncode != 0:
+        return ([f"cannot ssh to {args.board} (rc={r.returncode}): {out}\n"
+                 f"    key-based auth is required: ssh-copy-id {args.board}"], notes)
+
+    got = {}
+    for line in out.splitlines():
+        parts = line.strip().split(":")
+        if len(parts) == 3:
+            got[(parts[0], parts[1])] = parts[2]
+    if not got:
+        return ([f"board probe returned nothing usable from {args.board}: {out}"], notes)
+
+    missing_dt = sorted(n for (k, n), v in got.items()
+                        if k in ("rmem", "dt") and v != "ok")
+    missing_buf = sorted(n for (k, n), v in got.items()
+                         if k == "buf" and not v.isdigit())
+
+    if missing_dt:
+        problems.append(
+            "board device tree is missing: " + " ".join(missing_dt) + "\n"
+            "    openjls.dtbo was not applied at boot (first-time setup never ran,\n"
+            "    or its uenvcmd fell back to a stock boot). On the board, as root:\n"
+            f"    sudo ./setup_bootargs.sh && sudo reboot   "
+            f"(see {os.path.join(DEMO, 'Hardware', 'pynq-z2')}/INTERNALS.md)")
+    elif missing_buf:
+        problems.append(
+            "u-dma-buf is not loaded on the board (no udmabuf-ojls-"
+            + ", ".join(missing_buf) + ")\n"
+            "    the DMA carveout is live, so this is just the one-shot bring-up:\n"
+            "    it is REQUIRED AFTER EACH BOOT, and the sweep's per-depth\n"
+            "    board_reload.sh does not do it. On the board, as root:\n"
+            f"    sudo env HOME=$HOME ./board_setup.sh 8")
+    else:
+        sizes = {n: int(v) for (k, n), v in got.items() if k == "buf" and v.isdigit()}
+        notes.append("board: u-dma-buf up — "
+                     + ", ".join(f"{n} {_mib(sizes[n])}" for n in ("tx", "rx", "desc")
+                                 if n in sizes))
+        tx = sizes.get("tx", 0)
+        if tx and tx < TX_BYTES:
+            notes.append(f"  warn: board tx buffer is {_mib(tx)} but TX_BYTES is "
+                         f"{_mib(TX_BYTES)}; images between the two will be sent and\n"
+                         f"        fail rather than be skipped — set TX_BYTES={tx}")
+
+    if got.get(("server", "bin")) != "ok":
+        problems.append(
+            f"ojls_server not executable at {args.board_server_dir}/ojls_server "
+            f"on {args.board}\n"
+            f"    build and copy it: make -C '{os.path.join(DEMO, 'Software')}' "
+            f"CROSS_COMPILE=arm-linux-gnueabihf- ojls_server\n"
+            f"    then: scp -r '{os.path.join(DEMO, 'Software')}' {args.board}:~/")
+    if got.get(("fpga", "mgr")) != "ok":
+        problems.append(f"no /sys/class/fpga_manager/fpga0 on {args.board} — "
+                        "this kernel cannot load a bitstream")
+    return problems, notes
+
+
 # --- CharLS -----------------------------------------------------------------
 
 def charls_encode(src, dst):
@@ -246,6 +355,23 @@ def preflight(args):
             f"    build them: '{os.path.join(DEMO, 'Hardware', 'pynq-z2', 'build_all_bitness.sh')}'")
     if not args.dry_run and not args.board:
         problems.append("BOARD is required for a live sweep (or pass --dry-run)")
+
+    # The board itself. Everything above is a host-side file; this is the only
+    # check that can catch a board that will accept the sweep and then fail to
+    # serve it. Skipped when no board is configured (BOARD= empty), so the
+    # no-board --dry-run documented above still works. On a dry run its
+    # findings are warnings rather than errors: --dry-run reports, it doesn't
+    # gate.
+    if args.board:
+        board_problems, notes = board_probe(args)
+        for n in notes:
+            print(n)
+        if args.dry_run:
+            for p in board_problems:
+                print("warn: " + p, file=sys.stderr)
+        else:
+            problems += board_problems
+
     if problems:
         die("preflight failed:\n  - " + "\n  - ".join(problems))
 
@@ -300,7 +426,9 @@ def encode_one(args, path):
 def main():
     ap = argparse.ArgumentParser(description="HIL bitness sweep for EncodeOverEthernet")
     ap.add_argument("--dry-run", action="store_true",
-                    help="preflight + bucket histogram only; no board needed")
+                    help="preflight + bucket histogram only; encodes nothing. Probes "
+                         "the board over ssh and reports what it finds as warnings; "
+                         "set BOARD= empty to skip the board entirely")
     ap.add_argument("--bitness", nargs="+", type=int, metavar="N",
                     help="restrict to these depths (default: all available)")
     ap.add_argument("--limit", type=int, default=0,
@@ -351,7 +479,7 @@ def main():
         charls_gate()
 
     if args.dry_run:
-        print("\n--dry-run: not touching the board. Plan above.")
+        print("\n--dry-run: probed the board, encoded nothing. Plan above.")
         return
 
     # -- live sweep
