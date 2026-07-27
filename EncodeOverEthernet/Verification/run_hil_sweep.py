@@ -219,8 +219,20 @@ def board_probe(args):
                 notes)
     out = r.stdout.decode(errors="replace").strip()
     if r.returncode != 0:
+        # ssh exits 255 for "couldn't connect" and "connected but wouldn't let
+        # me in" alike, and the fixes are opposites: power/cable the board vs.
+        # install a key. Telling someone whose board is unplugged to run
+        # ssh-copy-id sends them down the wrong path, so split on the message.
+        low = out.lower()
+        unreachable = any(s in low for s in (
+            "connection timed out", "connection refused", "no route to host",
+            "network is unreachable", "name or service not known",
+            "could not resolve hostname", "host is down"))
+        hint = (f"check it is powered and on the network: ping {args.board_ip}"
+                if unreachable else
+                f"key-based auth is required: ssh-copy-id {args.board}")
         return ([f"cannot ssh to {args.board} (rc={r.returncode}): {out}\n"
-                 f"    key-based auth is required: ssh-copy-id {args.board}"], notes)
+                 f"    {hint}"], notes)
 
     got = {}
     for line in out.splitlines():
