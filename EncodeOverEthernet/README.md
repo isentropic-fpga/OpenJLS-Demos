@@ -185,6 +185,12 @@ cd Verification
 The `--dry-run` preflight checks all of the above and prints the exact
 command for anything missing.
 
+The sweep drives the board but does not bring it up: if it has been power-cycled
+since you last ran [step 3](#3-flash-and-bring-the-board-up), run
+`board_setup.sh` on it once more first. The per-depth `board_reload.sh` the sweep
+runs itself only cycles the PL image and the server — it deliberately leaves
+`u-dma-buf` alone. Preflight catches a board that needs it and says so.
+
 The encoder IP is synthesized with a maximum image size (**65535 x 65535** in
 the shipped block design); the server reads the exact limits from the `MAXDIM`
 register and rejects anything larger, and the sweep skips such images rather
