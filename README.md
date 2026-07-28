@@ -1,10 +1,12 @@
 # OpenJLS-Demos
 
-Demo projects for [OpenJLS](https://github.com/VitorMendesC/OpenJLS), the
+Demo projects for [OpenJLS](https://github.com/isentropic-fpga/OpenJLS), the
 open-source JPEG-LS (ITU-T T.87) hardware encoder. Each demo lives in its own
 directory with a self-contained, end-to-end README — software, hardware
 bring-up, and verification; the encoder core is shared by all of them as a
 submodule pinned at the verified commit.
+
+Core specs, benchmarks and licensing: **[isentropic.com.br/openjls](https://isentropic.com.br/openjls)**
 
 ## Projects
 
@@ -26,3 +28,11 @@ The hardware-in-the-loop sweep that produces these numbers is fully
 reproducible — see
 [`EncodeOverEthernet/README.md`](EncodeOverEthernet/README.md), which walks
 from a clean clone to a verified board.
+
+## About
+
+OpenJLS and these demos are developed and maintained by
+[Isentropic](https://isentropic.com.br), an FPGA engineering company.
+For commercial licensing, technical questions, or collaboration inquiries:
+[isentropic.com.br/contact](https://isentropic.com.br/contact) or
+contact@isentropic.com.br
