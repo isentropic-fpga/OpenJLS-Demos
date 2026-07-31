@@ -134,7 +134,7 @@ in the order that matters.
    ```
 
    The stock PYNQ image ships a whole-PL UIO node, `fabric` at 0x4000_0000,
-   which overlaps our register bank. It is **harmless** — two UIO devices can
+   which overlaps the `openjls` register bank. It is **harmless** — two UIO devices can
    map the same window, and the server picks its device by name — so no need to
    remove it. (To remove it anyway:
    `echo 40000000.fabric > /sys/bus/platform/drivers/uio_pdrv_genirq/unbind`.)
