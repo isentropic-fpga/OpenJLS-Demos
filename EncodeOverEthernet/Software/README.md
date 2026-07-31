@@ -1,189 +1,109 @@
-# OpenJLS Ethernet demo — software
+# Software — `ojls_server` (board) and `ojls_client` (host)
 
-Two plain-C programs, no vendor libraries:
+> Reference for the two programs of the [EncodeOverEthernet](../README.md)
+> demo. That README is the one to follow to actually run them.
 
-| Program | Runs on | Role |
-|---|---|---|
-| `ojls_server` | the board (Linux on the PS) | receives raw images over TCP, encodes them with the OpenJLS core in the PL via AXI DMA, returns the `.jls` stream |
-| `ojls_client` | any host | sends a PGM, saves the returned `.jls`, reports throughput |
+Plain C, no dependencies, no vendor libraries. The server reaches the hardware
+only through generic Linux interfaces — UIO for the register banks,
+[u-dma-buf](https://github.com/ikwzm/udmabuf) for the DMA buffers — so nothing
+here is board-specific: point it at your UIO/u-dma-buf names and it runs.
 
-The server reaches the hardware **only through generic Linux interfaces** —
-[UIO](https://www.kernel.org/doc/html/latest/driver-api/uio-howto.html) for
-registers and [u-dma-buf](https://github.com/ikwzm/udmabuf) for DMA buffers —
-so the same source runs unmodified on any board: porting is a block design +
-device tree job, not a software one.
+```
+host                                  board
+ojls_client ──── TCP :19020 ────► ojls_server ──► UIO regs + AXI DMA ──► PL
+            ◄─── .jls bytes ─────             ◄── S2MM + IRQ ──────────
+```
 
-## Building
+| Path | What |
+|---|---|
+| `host/ojls_client.c` | the client: reads a PGM, sends it, writes the `.jls` |
+| `src/ojls_server.c` | the server: accepts, DMAs, replies |
+| `src/uio.c`, `src/udmabuf.c`, `src/axidma.c` | the thin Linux-side layers: UIO mapping + IRQ wait, u-dma-buf discovery, AXI DMA Scatter/Gather ring |
+| `src/ojls_regs.h` | `openjls_axis_regs` register map — must match `ThirdParty/OpenJLS/Sources/axi/openjls_axis_regs.vhd` |
+| `common/ojls_proto.h` | the wire protocol, shared by both sides |
 
-One Makefile builds both programs; you need `ojls_client` on your host and
-`ojls_server` on the board. Each side runs `make` and ignores the binary it
-doesn't use:
+## Build
 
 ```sh
-make            # on your host  -> ojls_client (native)
-make            # on the board  -> ojls_server (native; a PYNQ image has gcc)
+make                                          # native (on the board, or the host)
+make CROSS_COMPILE=arm-linux-gnueabihf-       # cross, 32-bit ARM (Zynq-7000)
+make CROSS_COMPILE=aarch64-linux-gnu-         # cross, 64-bit ARM (Zynq UltraScale+)
 ```
 
-If the board has no toolchain (or no time to compile), cross-compile the server
-on your host instead of the board-side `make`, then copy it over:
-
-```sh
-make CROSS_COMPILE=arm-linux-gnueabihf-   # 32-bit ARM (Zynq-7000)   -> scp ojls_server to the board
-make CROSS_COMPILE=aarch64-linux-gnu-     # 64-bit ARM (Zynq UltraScale+)
-```
-
-Any C11 compiler + POSIX libc works — there's nothing board-specific in the
-source. See the [demo README](../README.md) for how this fits the full setup.
-
-## What the block design must provide
-
-The server assumes the hardware side is the `openjls_axis_regs` wrapper
-(`ThirdParty/OpenJLS/Sources/axi/openjls_axis_regs.vhd`) fed by a Xilinx AXI DMA:
-
-* **AXI DMA in Scatter/Gather mode.** The server builds a descriptor ring per
-  channel (in a third u-dma-buf, below), so one logical transfer chains past
-  the 64 MiB a 26-bit length register allows — an image is bounded by the DMA
-  buffers, not the DMA. The MM2S ring is framed (SOF/EOF) so the pixels present
-  as one TLAST packet however many descriptors they span; the S2MM ring is
-  walked after TLAST to sum the encoded byte count.
-* MM2S stream width = the wrapper's `s_axis_pixel` width (8 bits for BITNESS 8,
-  16 bits for BITNESS 9–16); S2MM stream width = `OUT_WIDTH` (default 64).
-* DMA interrupts to the PS are **optional** — the server polls, and sleeps on
-  the UIO interrupt instead when one is wired.
-* `openjls_axis_regs`'s `s_axi_ctrl` register bank reachable from the PS (any base
-  address; the device tree carries it).
-
-## Device tree
-
-Three kinds of nodes, addresses/sizes taken from your Address Editor
-(concrete overlays live under `../Hardware/<board>/`):
-
-```dts
-/* openjls_axis_regs register bank */
-openjls@43c00000 {
-    compatible = "generic-uio";
-    reg = <0x43c00000 0x1000>;
-};
-
-/* AXI DMA registers; interrupts optional */
-dma@40400000 {
-    compatible = "generic-uio";
-    reg = <0x40400000 0x10000>;
-    /* interrupt-parent = <&intc>; interrupts = <0 29 4>; */
-};
-
-/* DMA buffers — pixels in, bitstream out, and the SG descriptor rings.
- * Each node draws from its own exclusive reserved-memory carveout
- * (`shared-dma-pool` + `no-map`), so allocation is deterministic — no CMA
- * sizing or fragmentation. The catch: the kernel only honors reserved-memory
- * it sees at EARLY boot, so the overlay must be applied by the bootloader
- * (U-Boot), not at runtime — a configfs overlay would reserve nothing.
- * Keep each size a power of two, matching its pool.
- * See ../Hardware/pynq-z2/INTERNALS.md and openjls.dtso for the boot flow. */
-reserved-memory {
-    #address-cells = <1>; #size-cells = <1>; ranges;
-    ojls_tx_pool: ojls-tx@10000000 {
-        compatible = "shared-dma-pool";
-        reg = <0x10000000 0x08000000>;  /* 128 MiB: max input image raw size */
-        no-map;
-    };
-    ojls_rx_pool: ojls-rx@18000000 {
-        compatible = "shared-dma-pool";
-        reg = <0x18000000 0x08000000>;  /* 128 MiB: worst-case output is raw
-                                           +25% + slack, so effective max
-                                           input is ~102 MiB */
-        no-map;
-    };
-    ojls_desc_pool: ojls-desc@ffc0000 {
-        compatible = "shared-dma-pool";
-        reg = <0x0FFC0000 0x00040000>;  /* 256 KiB: SG descriptor rings */
-        no-map;
-    };
-};
-
-udmabuf-ojls-tx {
-    compatible = "ikwzm,u-dma-buf";
-    device-name = "udmabuf-ojls-tx";
-    size = <0x08000000>;
-    memory-region = <&ojls_tx_pool>;
-};
-udmabuf-ojls-rx {
-    compatible = "ikwzm,u-dma-buf";
-    device-name = "udmabuf-ojls-rx";
-    size = <0x08000000>;
-    memory-region = <&ojls_rx_pool>;
-};
-udmabuf-ojls-desc {
-    compatible = "ikwzm,u-dma-buf";
-    device-name = "udmabuf-ojls-desc";
-    size = <0x00040000>;
-    memory-region = <&ojls_desc_pool>;
-};
-```
-
-Two gotchas:
-
-* `generic-uio` only binds if the kernel command line (or a modprobe config)
-  contains `uio_pdrv_genirq.of_id=generic-uio`.
-* `u-dma-buf` is an out-of-tree module. The PYNQ-Z2 build ships a prebuilt
-  `u-dma-buf.ko` (in `Hardware/pynq-z2/`) you just copy to the board; for a
-  different kernel, build one from <https://github.com/ikwzm/udmabuf> and
-  `insmod`/`modprobe` it before starting the server. The server opens
-  `udmabuf-ojls-{tx,rx,desc}` by name; override any with
-  `--tx-buf`/`--rx-buf`/`--desc-buf`.
+Builds both binaries; `make ojls_client` alone is the usual host build.
 
 ## Running
 
-On the board:
-
-```sh
-./ojls_server                 # defaults: port 19020, UIO names "openjls" and "dma"
-./ojls_server --loopback      # no hardware: echo server for protocol testing anywhere
+```
+ojls_server [options]
+  -p PORT          TCP port (default 19020)
+  --regs NAME      UIO device of the openjls_axis_regs bank (default "openjls")
+  --dma NAME       UIO device of the AXI DMA (default "dma")
+  --tx-buf NAME    u-dma-buf for pixels in (default "udmabuf-ojls-tx")
+  --rx-buf NAME    u-dma-buf for bitstream out (default "udmabuf-ojls-rx")
+  --desc-buf NAME  u-dma-buf for the SG descriptor rings (default "udmabuf-ojls-desc")
+  --timeout MS     per-image encode timeout (default 10000)
+  --loopback       no hardware; echo payloads back (protocol test)
 ```
 
-On the host:
+Serves one connection at a time — the encoder is a single physical resource.
+`--loopback` lets you exercise the protocol, the client, and the network on any
+Linux machine, with no FPGA involved.
 
-```sh
-./ojls_client <board-ip> image.pgm            # writes image.jls
-./ojls_client -n 100 <board-ip> image.pgm     # 100 round trips, throughput figure
+```
+ojls_client [options] HOST INPUT.pgm [OUTPUT.jls]
+  -p PORT     TCP port (default 19020)
+  -b BITS     override bitness (default: derived from the PGM maxval)
+  -n COUNT    send the image COUNT times (throughput test, default 1)
 ```
 
-The client accepts binary PGM (P5), 8- or 16-bit; bitness is derived from the
-PGM `maxval` (override with `-b`) and must match the `BITNESS` the core was
-synthesized with — the server tells you (`bitness does not match hardware`)
-if it doesn't. Decode/verify the result with any JPEG-LS implementation,
-e.g. CharLS.
+Input is binary PGM (`P5`), grayscale, 8..16 bpp. Bitness comes from the maxval
+(255→8, 4095→12, 65535→16) and **must match the bitstream loaded on the
+board** — `BITNESS` is baked in at synthesis. A mismatch is refused cleanly with
+`OJLS_ST_BAD_BITNESS` rather than silently producing garbage. Default output is
+the input path with a `.jls` suffix.
 
 ## Wire protocol
 
-Fixed 20-byte little-endian header, then the payload:
+`common/ojls_proto.h` is the normative definition; this is the shape of it.
+A fixed 20-byte **little-endian** header — packed and parsed byte by byte, so
+it's independent of host endianness and struct padding — then the payload:
 
-| offset | size | field | notes |
+| Offset | Field | Bytes | Notes |
 |---|---|---|---|
-| 0 | 4 | magic | `"OJLS"` (0x4F4A4C53) |
-| 4 | 2 | version | 1 |
-| 6 | 1 | type | 1 = encode request, 2 = response |
-| 7 | 1 | status | 0 = OK (see `common/ojls_proto.h`) |
-| 8 | 2 | width | pixels |
-| 10 | 2 | height | pixels |
-| 12 | 1 | bitness | 8–16 |
-| 13 | 3 | reserved | zero |
-| 16 | 4 | payload_len | bytes after the header |
+| 0 | magic | 4 | `0x4F4A4C53` — `"OJLS"` |
+| 4 | version | 2 | `1` |
+| 6 | type | 1 | request `OJLS_MSG_ENCODE_REQ` / response `OJLS_MSG_ENCODE_RESP` |
+| 7 | status | 1 | `OJLS_ST_OK` or an error; response only |
+| 8 | width | 2 | pixels |
+| 10 | height | 2 | pixels |
+| 12 | bitness | 1 | 8..16 |
+| 13 | reserved | 3 | zero |
+| 16 | payload_len | 4 | raw pixels on the way in, `.jls` bytes on the way back |
 
-Request payload: raw pixels, row-major, right-justified little-endian, 1
-byte/pixel for bitness 8 and 2 bytes/pixel for 9–16. Response payload: the
-`.jls` stream (empty when status ≠ 0, with the reason in `status`).
+Request payload is the raw pixel array, row-major: 1 byte per pixel at 8 bpp,
+otherwise 2 bytes, right-justified little-endian. (PGM stores 16-bit samples
+big-endian, so the client byte-swaps.) The response payload is the complete
+JPEG-LS stream.
+Errors come back as a header with `payload_len = 0` and a status naming the
+cause: `OJLS_ST_BAD_MAGIC`, `OJLS_ST_BAD_VERSION`, `OJLS_ST_BAD_TYPE`,
+`OJLS_ST_BAD_BITNESS`, `OJLS_ST_BAD_DIMS`, `OJLS_ST_TOO_LARGE`,
+`OJLS_ST_SIZE_MISMATCH`, `OJLS_ST_HW_TIMEOUT`, `OJLS_ST_HW_ERROR`. The
+connection stays open — one bad image doesn't end the session.
 
-## Porting checklist
+## Porting to another board
 
-1. Rebuild the block design for your board (see `../Hardware/` for examples):
-   `openjls_axis_regs` + AXI DMA per the requirements above.
-2. Write the device tree overlay with your addresses; keep `openjls` and
-   `dma` in the node names, or pass `--regs`/`--dma` instead.
-3. Build and load u-dma-buf for your kernel; add the three buffer nodes
-   (tx/rx/desc), each backed by its own reserved-memory carveout, and make
-   sure your bootloader applies the overlay at boot.
-4. `make` on the board (or cross-compile) and run `ojls_server`.
+Nothing here needs to change. What has to be true on the target:
 
-Nothing in `Software/` should need changes — if it does, that's a bug worth
-reporting.
+* UIO nodes for the register bank and the AXI DMA (`compatible = "generic-uio"`
+  in the device tree, `uio_pdrv_genirq.of_id=generic-uio` on the kernel command
+  line), passed to `--regs` / `--dma` by name.
+* Three `u-dma-buf` regions, passed by name to `--tx-buf` / `--rx-buf` /
+  `--desc-buf`. **Always pass them explicitly** — auto-discovery picks
+  alphabetically and can swap the tx/rx roles.
+* An image that fits: tx buffer ≥ the raw pixels, rx buffer ≥ the worst-case
+  stream. Oversized requests are refused with `OJLS_ST_TOO_LARGE`.
+
+The PYNQ-Z2 reference wiring of all of the above — addresses, sizes, and the
+overlay that creates it — is in
+[`../Hardware/pynq-z2/INTERNALS.md`](../Hardware/pynq-z2/INTERNALS.md).
