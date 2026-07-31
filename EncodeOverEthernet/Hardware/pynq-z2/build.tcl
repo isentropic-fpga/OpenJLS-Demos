@@ -7,7 +7,9 @@
 #   vivado -mode batch -source build.tcl -tclargs --bitstream # + bitstream
 #
 # The project lands in ./build/ (git-ignored) — the Tcl scripts are the
-# source of truth; never commit the generated project.
+# source of truth; never commit the generated project. --build-dir moves it and
+# --jobs caps Vivado's own parallelism, which together let build_all_bitness.sh
+# run several depths at once without exhausting memory.
 
 set demo_dir [file dirname [file normalize [info script]]]
 set openjls_dir [file normalize [file join $demo_dir .. .. .. ThirdParty OpenJLS]]
@@ -26,7 +28,29 @@ if {![string is integer -strict $bitness] || $bitness < 8 || $bitness > 16} {
     error "--bitness must be an integer in 8..16 (got '$bitness')"
 }
 
-create_project encode_ethernet [file join $demo_dir build] -part xc7z020clg400-1 -force
+# --jobs N : how many runs Vivado may launch at once. This is not a thread
+# count — the block design has ~8 out-of-context IP synth runs, and each job is
+# a separate ~2.5 GB vivado process, so N multiplies peak memory. Default 4 for
+# a lone build; build_all_bitness.sh passes 1 and gets its parallelism from
+# running several depths side by side instead.
+set jobs 4
+set jidx [lsearch $argv "--jobs"]
+if {$jidx >= 0} { set jobs [lindex $argv [expr {$jidx + 1}]] }
+if {![string is integer -strict $jobs] || $jobs < 1} {
+    error "--jobs must be a positive integer (got '$jobs')"
+}
+
+# --build-dir PATH : where the generated project goes (a relative path is taken
+# from this script's directory). Default ./build. Two Vivado runs sharing one
+# project directory would clobber each other's runs/impl_1, so every depth in a
+# concurrent sweep needs its own — see build_all_bitness.sh.
+set proj_dir [file join $demo_dir build]
+set didx [lsearch $argv "--build-dir"]
+if {$didx >= 0} {
+    set proj_dir [file normalize [file join $demo_dir [lindex $argv [expr {$didx + 1}]]]]
+}
+
+create_project encode_ethernet $proj_dir -part xc7z020clg400-1 -force
 set_property target_language VHDL [current_project]
 
 # Board files come from the Vivado Board Store; the design still builds
@@ -35,16 +59,18 @@ if {[catch {set_property BOARD_PART tul.com.tw:pynq-z2:part0:1.0 [current_projec
     puts "WARNING: PYNQ-Z2 board files not installed, continuing with bare part: $err"
 }
 
-# The encoder now comes in as packaged IP (vitormendescamilo:openjls:*:1.0)
+# The encoder now comes in as packaged IP (isentropic:openjls:*:1.2)
 # from the submodule's committed IP repo. The cores are self-contained (OpenJLS
 # RTL + the open-logic primitives bundled under each core's src/), so no raw
 # RTL is added here and create_libraries_vivado.tcl is no longer sourced —
 # which also retires the old VHDL-2008 vs module-reference FILE_TYPE dance.
 set ip_repo [file join $openjls_dir Sources Xilinx ip_repo]
 if {![file isdirectory $ip_repo]} {
-    error "Packaged IP repo not found at $ip_repo — update the ThirdParty/OpenJLS\
-           submodule (needs OpenJLS commit 8f93507 \"Package the AXI wrappers as\
-           Vivado IP cores\" or later)."
+    error "Packaged IP repo not found at $ip_repo — run\
+           \"git submodule update --init --recursive\" from the repo root. The\
+           block design instantiates isentropic:openjls:openjls_axis_regs:1.2,\
+           so OpenJLS v1.2 or later is required; the submodule is pinned at a\
+           commit that provides it."
 }
 set_property ip_repo_paths $ip_repo [current_project]
 update_ip_catalog -rebuild
@@ -80,7 +106,7 @@ update_compile_order -fileset sources_1
 set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]
 
 if {[info exists argv] && [lsearch $argv "--bitstream"] >= 0} {
-    launch_runs impl_1 -to_step write_bitstream -jobs 4
+    launch_runs impl_1 -to_step write_bitstream -jobs $jobs
     wait_on_run impl_1
     if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
         error "Implementation failed — open the project under ./build/ to inspect."
@@ -100,5 +126,5 @@ if {[info exists argv] && [lsearch $argv "--bitstream"] >= 0} {
                failing path; refusing to stage a timing-violating bitstream."
     }
     puts "Timing met: post-route WNS = ${wns} ns"
-    puts "Bitstream: [glob [file join $demo_dir build encode_ethernet.runs impl_1 *.bit]]"
+    puts "Bitstream: [glob [file join $proj_dir encode_ethernet.runs impl_1 *.bit]]"
 }

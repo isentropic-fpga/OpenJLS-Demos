@@ -19,7 +19,7 @@ ojls_client ──── TCP :19020 ────► ojls_server ──► UIO re
 | `host/ojls_client.c` | the client: reads a PGM, sends it, writes the `.jls` |
 | `src/ojls_server.c` | the server: accepts, DMAs, replies |
 | `src/uio.c`, `src/udmabuf.c`, `src/axidma.c` | the thin Linux-side layers: UIO mapping + IRQ wait, u-dma-buf discovery, AXI DMA Scatter/Gather ring |
-| `src/ojls_regs.h` | `openjls_axis_regs` register map — must match `ThirdParty/OpenJLS/Sources/axi/openjls_axis_regs.vhd` |
+| `src/ojls_regs.h` | `openjls_axis_regs` register map — a verbatim copy of `ThirdParty/OpenJLS/Sources/Xilinx/ojls_regs.h`; re-copy it if the submodule pin moves |
 | `common/ojls_proto.h` | the wire protocol, shared by both sides |
 
 ## Build

@@ -1,9 +1,17 @@
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS. Available under GPLv3 or a
+ * commercial license. See LICENSE and README for details.
+ */
+
 /*-----------------------------------------------------------------------------------------------------------
 -- Engineer:    Vitor Mendes Camilo
 --
 -- File:        ojls_regs.h
 -- Description: Register map of the openjls_axis_regs AXI4-Lite wrapper
---              (Sources/axi/openjls_axis_regs.vhd). Byte offsets, 32-bit registers.
+--              (Sources/Xilinx/openjls_axis_regs.vhd). Byte offsets, 32-bit registers.
 -----------------------------------------------------------------------------------------------------------*/
 
 #ifndef OJLS_REGS_H

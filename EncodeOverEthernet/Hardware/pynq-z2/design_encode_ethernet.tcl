@@ -134,7 +134,7 @@ xilinx.com:ip:processing_system7:5.5\
 xilinx.com:ip:axi_dma:7.1\
 xilinx.com:ip:smartconnect:1.0\
 xilinx.com:ip:proc_sys_reset:5.0\
-vitormendescamilo:openjls:openjls_axis_regs:1.1\
+isentropic:openjls:openjls_axis_regs:1.2\
 "
 
    set list_ips_missing ""
@@ -773,8 +773,9 @@ proc create_root_design { parentCell } {
 
 
   # Create instance: openjls_axis_regs_0, and set properties
-  set openjls_axis_regs_0 [ create_bd_cell -type ip -vlnv vitormendescamilo:openjls:openjls_axis_regs:1.1 openjls_axis_regs_0 ]
+  set openjls_axis_regs_0 [ create_bd_cell -type ip -vlnv isentropic:openjls:openjls_axis_regs:1.2 openjls_axis_regs_0 ]
   set_property -dict [list \
+    CONFIG.BITNESS {8} \
     CONFIG.MAX_IMAGE_HEIGHT {65535} \
     CONFIG.MAX_IMAGE_WIDTH {65535} \
   ] $openjls_axis_regs_0
@@ -832,6 +833,7 @@ proc create_root_design { parentCell } {
   # Restore current instance
   current_bd_instance $oldCurInst
 
+  validate_bd_design
   save_bd_design
 }
 # End of create_root_design()
@@ -843,6 +845,4 @@ proc create_root_design { parentCell } {
 
 create_root_design ""
 
-
-common::send_gid_msg -ssname BD::TCL -id 2053 -severity "WARNING" "This Tcl script was generated from a block design that has not been validated. It is possible that design <$design_name> may result in errors during validation."
 
