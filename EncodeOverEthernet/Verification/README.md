@@ -1,10 +1,11 @@
 # Hardware-in-the-loop verification
 
-> The verification half of the [EncodeOverEthernet](../README.md) demo; run it
-> once the board is set up per that README.
+> The verification half of the [EncodeOverEthernet](../README.md) demo. Set the
+> board up by following that README first (through step 3), then come back —
+> or just run `./run_hil_sweep.py --dry-run`, which tells you what is missing.
 
-Drives the PYNQ-Z2 through the OpenJLS golden corpus, one encoder precision at a
-time, and byte-compares every hardware-encoded `.jls` against a CharLS
+Drives the PYNQ-Z2 through the OpenJLS golden corpus, one encoder pixel depth at
+a time, and byte-compares every hardware-encoded `.jls` against a CharLS
 reference — the **same oracle** the simulation golden model uses. A pass proves
 the silicon reproduces CharLS exactly, across `BITNESS` 8..16.
 
@@ -16,9 +17,9 @@ duplicated.
 
 ## How it works
 
-The corpus is not organized by precision — each image carries its own via its
+The corpus is not organized by depth — each image carries its own via its
 PGM maxval (255→8, 4095→12, 65535→16). The driver buckets images by that
-(exactly as the client derives it) and, for each precision `N`:
+(exactly as the client derives it) and, for each depth `N`:
 
 1. reloads `bitstreams/encode_eth_openjls_b<N>.bit.bin` on the board and
    restarts the server (`board_reload.sh`, over ssh, as root);
@@ -28,7 +29,7 @@ PGM maxval (255→8, 4095→12, 65535→16). The driver buckets images by that
 The server restart in step 1 is load-bearing: it reads the hardware `BITNESS`
 from the CAPS register **once at startup** and rejects mismatched requests, so a
 still-running server would reject the whole new bucket after a reload. The
-device-tree overlay and `u-dma-buf` are precision-independent and stay loaded.
+device-tree overlay and `u-dma-buf` are depth-independent and stay loaded.
 
 ## Files
 
@@ -60,18 +61,16 @@ first if it's empty:
   `ThirdParty/OpenJLS/Verification/T87 conformance/fetch_reference_images.sh`.
 - **Client** — `make -C ../Software ojls_client`.
 - **Bitstreams** — `../Hardware/pynq-z2/build_all_bitness.sh`.
-- **Board** — reachable over ssh with **key-based** auth (once:
-  `ssh-copy-id xilinx@192.168.2.99`, stock password `xilinx`), the demo `Software/`
-  built there (`ojls_server`), the first-time boot setup done
-  (`../Hardware/pynq-z2/setup_bootargs.sh` + reboot), and brought up once with
-  `board_setup.sh` (loads PL + `u-dma-buf`, starts the server; see
-  `../Hardware/pynq-z2/INTERNALS.md`). The driver stages the bitstreams and
-  reload script itself.
+- **Board** — set up through step 3 of the [demo README](../README.md): server
+  built on the board, `setup_bootargs.sh` done once, `board_setup.sh` run this
+  boot. Plus **key-based** ssh auth, which the demo doesn't need but the sweep
+  does — once: `ssh-copy-id xilinx@192.168.2.99` (stock password `xilinx`).
+  The driver stages the bitstreams and the reload script itself.
 
 ## Running
 
 ```sh
-# Preview the corpus precision histogram and check prerequisites — no board:
+# Preview the corpus depth histogram and check prerequisites — no board needed:
 ./run_hil_sweep.py --dry-run
 
 # Full sweep (defaults to BOARD=xilinx@192.168.2.99, SUDO_PASS=xilinx):
