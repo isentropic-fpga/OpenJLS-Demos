@@ -90,7 +90,7 @@ ssh-copy-id xilinx@192.168.2.99
 The verification corpus lives in a submodule, so clone recursively:
 
 ```sh
-git clone --recursive https://github.com/VitorMendesC/OpenJLS-Demos
+git clone --recursive https://github.com/isentropic-fpga/OpenJLS-Demos
 cd OpenJLS-Demos/EncodeOverEthernet
 ```
 
