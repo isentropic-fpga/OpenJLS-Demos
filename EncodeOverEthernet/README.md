@@ -5,14 +5,7 @@ hardware**, and stream the `.jls` files back. The CPU on the board only shuttles
 bytes between the socket and an AXI DMA — the encode itself is 100% the OpenJLS
 core in the PL.
 
-```
-┌─ host ───────┐            ┌─ board (PS) ─┐                     ┌─ board (PL) ──────┐
-│              │─── TCP ───►│              │─── AXI DMA MM2S ───►│                   │
-│ ojls_client  │            │ ojls_server  │◄─── AXI DMA S2MM ───│ openjls_axis_regs │
-│              │◄─── TCP ───│              │◄──── AXI-Lite ─────►│                   │
-│              │   (.jls)   │              │ dims, apply, status │                   │
-└──────────────┘            └──────────────┘                     └───────────────────┘
-```
+![Host PC running ojls_client exchanges image data and the compressed stream with a PYNQ-Z2 over TCP. On the board, ojls_server copies pixels into DDR, an AXI DMA moves them over AXI4 and streams them into the OpenJLS core in the FPGA over AXI4-Stream, and the server configures the core directly over AXI4-Lite.](../Docs/Images/EncodeOverEthernet_arch.png)
 
 This page is the reproduction guide: follow it top to bottom and you go from a
 clean clone to a board that encodes images. It covers the PYNQ-Z2 build that

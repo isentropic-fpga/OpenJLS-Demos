@@ -15,14 +15,7 @@ board encodes them to JPEG-LS **entirely in the fabric** and sends the `.jls`
 files back. The CPU on the board never touches a pixel: it only moves bytes
 between the socket and an AXI DMA, and the encode is 100% the OpenJLS core.
 
-```
-┌─ host ───────┐            ┌─ board (PS) ─┐                     ┌─ board (PL) ──────┐
-│              │─── TCP ───►│              │─── AXI DMA MM2S ───►│                   │
-│ ojls_client  │            │ ojls_server  │◄─── AXI DMA S2MM ───│ openjls_axis_regs │
-│              │◄─── TCP ───│              │◄──── AXI-Lite ─────►│                   │
-│              │   (.jls)   │              │ dims, apply, status │                   │
-└──────────────┘            └──────────────┘                     └───────────────────┘
-```
+![A host PC sends raw image data over Ethernet to a PYNQ-Z2 board. On the board, a small C program hands the pixels to the OpenJLS encoder in the FPGA fabric and sends the compressed JPEG-LS stream back over the same link.](Docs/Images/EncodeOverEthernet_arch.png)
 
 A PYNQ-Z2 (Zynq-7020) build ships prebuilt — bitstreams for every supported
 pixel depth, the device-tree overlay, and the DMA kernel module — so the demo
