@@ -59,7 +59,7 @@ if {[catch {set_property BOARD_PART tul.com.tw:pynq-z2:part0:1.0 [current_projec
     puts "WARNING: PYNQ-Z2 board files not installed, continuing with bare part: $err"
 }
 
-# The encoder now comes in as packaged IP (isentropic:openjls:*:1.2)
+# The encoder now comes in as packaged IP (isentropic:openjls:*:1.3)
 # from the submodule's committed IP repo. The cores are self-contained (OpenJLS
 # RTL + the open-logic primitives bundled under each core's src/), so no raw
 # RTL is added here and create_libraries_vivado.tcl is no longer sourced —
@@ -68,8 +68,8 @@ set ip_repo [file join $openjls_dir Sources Xilinx ip_repo]
 if {![file isdirectory $ip_repo]} {
     error "Packaged IP repo not found at $ip_repo — run\
            \"git submodule update --init --recursive\" from the repo root. The\
-           block design instantiates isentropic:openjls:openjls_axis_regs:1.2,\
-           so OpenJLS v1.2 or later is required; the submodule is pinned at a\
+           block design instantiates isentropic:openjls:openjls_axis_regs:1.3,\
+           so OpenJLS v1.3 or later is required; the submodule is pinned at a\
            commit that provides it."
 }
 set_property ip_repo_paths $ip_repo [current_project]
@@ -99,10 +99,19 @@ set_property top design_encode_ethernet_wrapper [get_filesets sources_1]
 update_compile_order -fileset sources_1
 
 # Extra congestion spreading during placement; kept as belt-and-suspenders. The
-# real timing limit here is a deep, high-fanout combinational path inside the
-# OpenJLS byte_stuffer (not congestion or fit — the part is only ~25% full), so
-# the fabric clock is held at 50 MHz (design_encode_ethernet.tcl) to close it;
-# this strategy alone does not rescue it at higher clocks.
+# limit here is path depth, not congestion or fit (the part is only ~25% full),
+# so this strategy alone does not rescue the design at higher clocks. Through
+# OpenJLS v1.2 the critical path was inside the byte_stuffer, which forced the
+# fabric clock down to 50 MHz. v1.3 reworked that block; a b16 probe at 100 MHz
+# now closes to WNS = -2.797 ns, with the worst path running
+# openjls_top/sReg1D1 -> ctx_ram/sUseInitReg and the runner-up in the errval
+# datapath. The fabric clock is therefore set to 71.43 MHz (= 1000 MHz IO PLL
+# / 14) in design_encode_ethernet.tcl -- the next divisor up, 76.9 MHz, does not
+# close. Do not read the -2.797 ns probe as "Fmax is 78 MHz": the router only
+# works as hard as the constraint demands, so a slack-derived Fmax from a
+# relaxed run is optimistic. Measured at 14 ns, the binding depths are b16
+# (WNS +0.131 ns) and b12 (+0.224 ns) -- under 2% margin, deliberately accepted.
+# Any timing regression will surface at those two depths first.
 set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]
 
 if {[info exists argv] && [lsearch $argv "--bitstream"] >= 0} {
