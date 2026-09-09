@@ -134,7 +134,7 @@ xilinx.com:ip:processing_system7:5.5\
 xilinx.com:ip:axi_dma:7.1\
 xilinx.com:ip:smartconnect:1.0\
 xilinx.com:ip:proc_sys_reset:5.0\
-isentropic:openjls:openjls_axis_regs:1.2\
+isentropic:openjls:openjls_axis_regs:1.3\
 "
 
    set list_ips_missing ""
@@ -215,7 +215,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_DCI_PERIPHERAL_FREQMHZ {10.096154} \
     CONFIG.PCW_ACT_ENET0_PERIPHERAL_FREQMHZ {125.000000} \
     CONFIG.PCW_ACT_ENET1_PERIPHERAL_FREQMHZ {10.000000} \
-    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {50.000000} \
+    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {71.428571} \
     CONFIG.PCW_ACT_FPGA1_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_FPGA2_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_FPGA3_PERIPHERAL_FREQMHZ {10.000000} \
@@ -243,7 +243,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_CAN1_PERIPHERAL_CLKSRC {External} \
     CONFIG.PCW_CAN_PERIPHERAL_CLKSRC {IO PLL} \
     CONFIG.PCW_CAN_PERIPHERAL_VALID {0} \
-    CONFIG.PCW_CLK0_FREQ {50000000} \
+    CONFIG.PCW_CLK0_FREQ {71428571} \
     CONFIG.PCW_CLK1_FREQ {10000000} \
     CONFIG.PCW_CLK2_FREQ {10000000} \
     CONFIG.PCW_CLK3_FREQ {10000000} \
@@ -343,7 +343,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_FCLK2_PERIPHERAL_CLKSRC {IO PLL} \
     CONFIG.PCW_FCLK3_PERIPHERAL_CLKSRC {IO PLL} \
     CONFIG.PCW_FCLK_CLK0_BUF {TRUE} \
-    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {50} \
+    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {71.43} \
     CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {50} \
     CONFIG.PCW_FPGA2_PERIPHERAL_FREQMHZ {50} \
     CONFIG.PCW_FPGA3_PERIPHERAL_FREQMHZ {50} \
@@ -773,7 +773,7 @@ proc create_root_design { parentCell } {
 
 
   # Create instance: openjls_axis_regs_0, and set properties
-  set openjls_axis_regs_0 [ create_bd_cell -type ip -vlnv isentropic:openjls:openjls_axis_regs:1.2 openjls_axis_regs_0 ]
+  set openjls_axis_regs_0 [ create_bd_cell -type ip -vlnv isentropic:openjls:openjls_axis_regs:1.3 openjls_axis_regs_0 ]
   set_property -dict [list \
     CONFIG.BITNESS {8} \
     CONFIG.MAX_IMAGE_HEIGHT {65535} \
