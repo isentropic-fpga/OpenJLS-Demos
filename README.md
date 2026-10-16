@@ -1,4 +1,7 @@
-# OpenJLS-Demos
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="Docs/Images/openjls-demos-wordmark-dark.svg">
+  <img alt="OpenJLS-Demos" src="Docs/Images/openjls-demos-wordmark.svg" width="548">
+</picture>
 
 Demo projects for [OpenJLS](https://github.com/isentropic-fpga/OpenJLS), the
 open-source JPEG-LS (ITU-T T.87) hardware encoder. Each demo lives in its own
