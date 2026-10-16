@@ -10,10 +10,11 @@ design, or if you're bringing the demo up on different hardware.
 
 PS7 GEM handles Ethernet; `openjls_axis_regs` (the OpenJLS encoder wrapped with
 an AXI-Lite register bank, BITNESS 8, max 65535×65535) and an AXI DMA sit in the
-PL on a **71.43 MHz** fabric clock.
+PL on a **70 MHz** fabric clock.
 
-**Why 71.43 MHz.** It is the 1000 MHz IO PLL divided by 14; the next divisor
-up, 76.9 MHz, does not close timing on this `-1` speed grade. The limit is the
+**Why 70 MHz.** It is the 1050 MHz DDR PLL divided by 15. The IO PLL can only
+give 1000/N (71.43, 76.9 MHz, ...), and 76.9 MHz does not close timing on this
+`-1` speed grade. The limit is the
 encoder's context-RAM control path — a core-logic limit, not a fit or
 congestion one; the part is only ~25% full. `build.tcl` refuses to stage a bitstream whose
 post-route WNS is negative, so this limit can't be shipped by accident; if you
@@ -314,7 +315,7 @@ Zynq-MPSoC board, give it a sibling directory under `Hardware/` and adapt:
   `tul.com.tw:pynq-z2` board part; `design_encode_ethernet.tcl` bakes the PS7
   configuration (DDR, GEM, clocks) from that preset. Regenerate the PS block for
   your board's preset rather than hand-editing PCW values.
-* **Fabric clock** — 71.43 MHz is this `-1` part's ceiling for the encoder's
+* **Fabric clock** — 70 MHz is this `-1` part's ceiling for the encoder's
   context-RAM control path. A faster speed grade may close higher; a slower one may need less.
   `build.tcl` gates on WNS, so raising
   `PCW_*FPGA0_PERIPHERAL_FREQMHZ` and rebuilding will *tell you* if it doesn't
