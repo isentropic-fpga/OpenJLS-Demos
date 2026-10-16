@@ -7,7 +7,7 @@
 
 The design: PS7 GEM handles Ethernet; the OpenJLS encoder
 (`openjls_axis_regs`) and an AXI DMA in Scatter/Gather mode sit in the PL on a
-71.43 MHz fabric clock. [`INTERNALS.md`](INTERNALS.md) explains why each of
+70 MHz fabric clock. [`INTERNALS.md`](INTERNALS.md) explains why each of
 those choices is what it is, walks the manual bring-up the scripts automate,
 and covers porting to another board.
 
@@ -40,7 +40,7 @@ Both produce `bitstreams/encode_eth_openjls_b<N>.bit.bin` plus the shared
 
 BITNESS is baked in at synthesis, so each pixel depth is its own bitstream —
 that is why there are nine of them and why the verification sweep reloads the
-PL between depths. Why per-depth, and why the 71.43 MHz clock and SG mode:
+PL between depths. Why per-depth, and why the 70 MHz clock and SG mode:
 [`INTERNALS.md`](INTERNALS.md).
 
 ## The board-side scripts
