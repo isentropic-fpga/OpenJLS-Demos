@@ -105,13 +105,13 @@ update_compile_order -fileset sources_1
 # fabric clock down to 50 MHz. v1.3 reworked that block; a b16 probe at 100 MHz
 # now closes to WNS = -2.797 ns, with the worst path running
 # openjls_top/sReg1D1 -> ctx_ram/sUseInitReg and the runner-up in the errval
-# datapath. The fabric clock is therefore set to 71.43 MHz (= 1000 MHz IO PLL
-# / 14) in design_encode_ethernet.tcl -- the next divisor up, 76.9 MHz, does not
-# close. Do not read the -2.797 ns probe as "Fmax is 78 MHz": the router only
-# works as hard as the constraint demands, so a slack-derived Fmax from a
-# relaxed run is optimistic. Measured at 14 ns, the binding depths are b16
-# (WNS +0.131 ns) and b12 (+0.224 ns) -- under 2% margin, deliberately accepted.
-# Any timing regression will surface at those two depths first.
+# datapath. The fabric clock is therefore set to 70 MHz (= 1050 MHz DDR PLL /
+# 15) in design_encode_ethernet.tcl; the IO PLL only gives 1000/N, and its next
+# step up, 76.9 MHz, does not close. Do not read the -2.797 ns probe as "Fmax is
+# 78 MHz": the router only works as hard as the constraint demands, so a
+# slack-derived Fmax from a relaxed run is optimistic. Measured at 70 MHz with
+# OpenJLS d6908a8, the binding depth is b11 (WNS +0.161 ns, ~1% margin), then
+# b13 (+0.350 ns). Any timing regression will surface there first.
 set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]
 
 if {[info exists argv] && [lsearch $argv "--bitstream"] >= 0} {
