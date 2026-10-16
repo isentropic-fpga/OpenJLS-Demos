@@ -26,10 +26,9 @@ to another board is a block-design and device-tree job, not a software one.
 ### Outcome
 
 Verified in hardware on a PYNQ-Z2. Across the full verification corpus —
-**287 images spanning every supported pixel depth (8–16 bits)** — the FPGA
-output is **byte-exact against the CharLS reference encoder**, with zero
-mismatches. Losslessly compressed, the 581 MB corpus comes back as 356 MB
-(1.63:1 overall; the ratio is content-dependent).
+**5639 images spanning every supported pixel depth (8–16 bits)**, including
+the full-size originals — the FPGA output is **byte-exact against the CharLS
+reference encoder**, with zero mismatches.
 
 The hardware-in-the-loop sweep that produces these numbers is part of the demo
 and is fully reproducible:

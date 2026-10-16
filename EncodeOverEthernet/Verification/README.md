@@ -39,14 +39,6 @@ device-tree overlay and `u-dma-buf` are depth-independent and stay loaded.
 | `board_setup.sh`   | board | **one-shot bring-up after a power cycle**: load PL, verify the boot-time overlay + DMA carveout, load `u-dma-buf`, verify buffers, start server |
 | `board_reload.sh`  | board | lighter per-depth path: reload a depth's bitstream + restart the server (copied over by the driver) |
 
-`board_setup.sh` is the whole board-side bring-up (documented step by step in
-`../Hardware/pynq-z2/INTERNALS.md`) collapsed into one idempotent command — run
-it once after each boot and the board is ready. (The device-tree overlay itself
-is applied by U-Boot at boot — installed once per board by
-`../Hardware/pynq-z2/setup_bootargs.sh`; `board_setup.sh` verifies it rather
-than applying it.) `board_reload.sh` is what the sweep calls between depths,
-when `u-dma-buf` is already up and only the PL image and server need to cycle.
-
 ## Prerequisites
 
 Produced by the core / demo, checked by the driver's preflight (which prints the

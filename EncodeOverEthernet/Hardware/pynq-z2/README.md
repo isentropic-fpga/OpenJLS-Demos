@@ -7,10 +7,9 @@
 
 The design: PS7 GEM handles Ethernet; the OpenJLS encoder
 (`openjls_axis_regs`) and an AXI DMA in Scatter/Gather mode sit in the PL on a
-50 MHz fabric clock. The CPU only shuttles bytes between the socket and the
-DMA — the encode is 100% hardware. [`INTERNALS.md`](INTERNALS.md) explains why
-each of those choices is what it is, walks the manual bring-up the scripts
-automate, and covers porting to another board.
+71.43 MHz fabric clock. [`INTERNALS.md`](INTERNALS.md) explains why each of
+those choices is what it is, walks the manual bring-up the scripts automate,
+and covers porting to another board.
 
 ## What ships here, prebuilt
 
@@ -41,25 +40,14 @@ Both produce `bitstreams/encode_eth_openjls_b<N>.bit.bin` plus the shared
 
 BITNESS is baked in at synthesis, so each pixel depth is its own bitstream —
 that is why there are nine of them and why the verification sweep reloads the
-PL between depths. Why per-depth, and why the 50 MHz clock and SG mode:
+PL between depths. Why per-depth, and why the 71.43 MHz clock and SG mode:
 [`INTERNALS.md`](INTERNALS.md).
 
 ## The board-side scripts
 
-Both are documented as steps in the [demo README](../../README.md); this is
-what they are and where they live.
-
-* `setup_bootargs.sh` (here) — **once per board**, as root, with
-  `openjls.dtbo` next to it, then reboot. Puts `generic-uio` on the kernel
-  command line and installs `openjls.dtbo` plus a U-Boot `uenvcmd` in
-  `/boot/uEnv.txt`, so the overlay — and the DMA carveout it reserves — is
-  applied **at boot**, which is the only time the kernel will honor it.
-  Idempotent.
-* `board_setup.sh` ([in `../../Verification/`](../../Verification/board_setup.sh))
-  — **once per boot**, as root. Loads the PL, verifies the boot-time overlay
-  and its carveout are live, loads `u-dma-buf`, verifies the buffers, starts
-  the server. Idempotent. `board_reload.sh` next to it is the lighter
-  per-depth path the verification sweep drives.
+`setup_bootargs.sh` (here, once per board) and `board_setup.sh` (in
+[`../../Verification/`](../../Verification/board_setup.sh), once per boot) are
+steps 2 and 3 of the [demo README](../../README.md).
 
 ## Where to go next
 

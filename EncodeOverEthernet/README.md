@@ -231,7 +231,7 @@ once, from the repo root (one level up — the submodule sits beside
 cd ..                                                              # repo root
 ThirdParty/OpenJLS/ThirdParty/fetch_third_party.sh charls          # reference encoder
 "ThirdParty/OpenJLS/Verification/T87 conformance/fetch_reference_images.sh"
-"ThirdParty/OpenJLS/Verification/Golden model/prepare_images.sh"   # ~600 MB of PGMs
+"ThirdParty/OpenJLS/Verification/Golden model/prepare_images.sh"   # ~1.2 GB of PGMs
 ```
 
 Then run it (it targets `xilinx@192.168.2.99` by default; override with
@@ -244,14 +244,14 @@ cd EncodeOverEthernet/Verification
 ```
 
 `--dry-run` checks every prerequisite and prints the exact command for anything
-missing — start there. The full sweep reloads the PL nine times and encodes 287
+missing — start there. The full sweep reloads the PL nine times and encodes 5639
 images, so it is not quick; `--bitness 8 --limit 5` is a fast smoke test.
 
 ```
 ==================== summary ====================
-  b8 :  225 pass     0 fail     0 skip   [OK]
+  b8 :  732 pass     0 fail     0 skip   [OK]
   ...
-  all: 287 pass, 0 fail, 0 skip
+  all: 5639 pass, 0 fail, 0 skip
 ```
 
 Exit status is non-zero if anything mismatched. Per-image results land in
