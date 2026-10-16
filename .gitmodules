@@ -1,3 +1,4 @@
 [submodule "ThirdParty/OpenJLS"]
 	path = ThirdParty/OpenJLS
 	url = https://github.com/isentropic-fpga/OpenJLS
+	branch = main
