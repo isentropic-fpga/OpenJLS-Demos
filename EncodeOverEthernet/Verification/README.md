@@ -88,5 +88,5 @@ Configuration is entirely via environment — see the header of
 `run_hil_sweep.py` for every variable and its default. Key ones: `BOARD` /
 `SUDO_PASS` (default to the standard bench setup above; set a different target
 or `BOARD=` empty for dry-run-only), `SSH_KEY`,
-`BITSTREAM_DIR`/`IMAGES_DIR`/`CHARLS`/`CLIENT` overrides,
+`BITSTREAM_DIR`/`IMAGES_DIR`/`FULL_IMAGES_DIR`/`CHARLS`/`CLIENT` overrides (`FULL_IMAGES_DIR` holds the full-size originals the corpus slices into strips; swept when present),
 and `TX_BYTES` (images larger than the board tx buffer are skipped, not failed).

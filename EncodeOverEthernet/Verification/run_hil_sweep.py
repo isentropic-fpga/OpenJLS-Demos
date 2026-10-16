@@ -39,6 +39,9 @@ Configuration (all via environment, sensible defaults for the in-tree layout):
                    (default: $BOARD_HOME/bitstreams)
   BITSTREAM_DIR    host dir of encode_eth_openjls_b*.bit.bin
   IMAGES_DIR       host dir of prepared corpus PGMs
+  FULL_IMAGES_DIR  host dir of the full-size originals the corpus slices to
+                   strips (default: Images_full beside IMAGES_DIR); swept too
+                   when present. Set FULL_IMAGES_DIR= empty to skip them.
   CHARLS           path to charls-cli
   CLIENT           path to the host ojls_client
   OUT_DIR          scratch for goldens / encoded outputs / results.csv
@@ -76,6 +79,7 @@ def env(name, default):
 
 BITSTREAM_DIR = env("BITSTREAM_DIR", os.path.join(DEMO, "Hardware", "pynq-z2", "bitstreams"))
 IMAGES_DIR = env("IMAGES_DIR", os.path.join(OJLS, "Verification", "Golden model", "Images"))
+FULL_IMAGES_DIR = env("FULL_IMAGES_DIR", os.path.join(os.path.dirname(IMAGES_DIR), "Images_full"))
 CHARLS = env("CHARLS", os.path.join(OJLS, "ThirdParty", "charls", "build", "cli", "charls-cli"))
 CLIENT = env("CLIENT", os.path.join(DEMO, "Software", "ojls_client"))
 OUT_DIR = env("OUT_DIR", os.path.join(HERE, "out"))
@@ -320,14 +324,26 @@ def available_bitstreams():
     return found
 
 
+def corpus_dirs():
+    """IMAGES_DIR, plus FULL_IMAGES_DIR when set and present."""
+    dirs = [IMAGES_DIR]
+    if FULL_IMAGES_DIR and os.path.isdir(FULL_IMAGES_DIR):
+        dirs.append(FULL_IMAGES_DIR)
+    return dirs
+
+
+def corpus_pgms():
+    for d in corpus_dirs():
+        for name in sorted(os.listdir(d)):
+            if name.lower().endswith(".pgm"):
+                yield name, os.path.join(d, name)
+
+
 def enumerate_corpus():
     """Map bitness -> list of (path, w, h, bytes_per_pixel, in_bytes)."""
     buckets = {}
     sub8 = []
-    for name in sorted(os.listdir(IMAGES_DIR)):
-        if not name.lower().endswith(".pgm"):
-            continue
-        path = os.path.join(IMAGES_DIR, name)
+    for name, path in corpus_pgms():
         try:
             w, h, mx = pgm_geom(path)
         except Fail as e:
@@ -469,7 +485,7 @@ def main():
         depths = [d for d in depths if d in args.bitness]
 
     # -- report the plan
-    print(f"\ncorpus: {IMAGES_DIR}")
+    print(f"\ncorpus: {', '.join(corpus_dirs())}")
     print(f"bitstreams: {sorted(bitstreams)}")
     print("bucket histogram (precision: image count):")
     for n in range(8, 17):
