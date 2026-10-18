@@ -1,15 +1,12 @@
 # PYNQ-Z2 (Zynq-7020) — board files
 
-> The hardware half of the [EncodeOverEthernet](../../README.md) demo.
-> **To run the demo, start at that README** — the board files here ship
-> prebuilt and it tells you what to copy where. This page is for *rebuilding*
-> them from source.
+> To run the demo, start at the [EncodeOverEthernet README](../../README.md);
+> these files ship prebuilt. This page covers *rebuilding* them.
 
-The design: PS7 GEM handles Ethernet; the OpenJLS encoder
-(`openjls_axis_regs`) and an AXI DMA in Scatter/Gather mode sit in the PL on a
-70 MHz fabric clock. [`INTERNALS.md`](INTERNALS.md) explains why each of
-those choices is what it is, walks the manual bring-up the scripts automate,
-and covers porting to another board.
+PS7 GEM handles Ethernet; the OpenJLS encoder (`openjls_axis_regs`) and an AXI
+DMA in Scatter/Gather mode sit in the PL on a 70 MHz fabric clock.
+[`INTERNALS.md`](INTERNALS.md) has the rationale, the manual bring-up and
+porting notes.
 
 ## What ships here, prebuilt
 
@@ -19,10 +16,9 @@ and covers porting to another board.
 | `openjls.dtbo` | device-tree overlay: UIO nodes + the DMA reserved-memory carveout | you change addresses or buffer sizes |
 | `u-dma-buf.ko` | the [u-dma-buf](https://github.com/ikwzm/udmabuf) kernel module | your board's kernel differs from the PYNQ image's `6.6.10-xilinx-v2024.1-g3c0eca68c652` (see [`INTERNALS.md`](INTERNALS.md)) |
 
-Sources for the first two: `build.tcl` and `design_encode_ethernet.tcl`
-recreate the Vivado project and its block design — the Tcl is the source of
-truth, the project itself is never committed — and `openjls.dtso` is the
-overlay source.
+`build.tcl` and `design_encode_ethernet.tcl` recreate the Vivado project and
+block design (the Tcl is the source of truth; the project is not committed).
+`openjls.dtso` is the overlay source.
 
 ## Rebuilding
 
@@ -31,26 +27,15 @@ the encoder pixel depth (8..16).
 
 ```sh
 ./build_specific_bitness.sh 8      # one depth
-./build_all_bitness.sh             # every depth, 8..16 (hours: a full synth+impl each)
+./build_all_bitness.sh             # every depth, 8..16
 ```
 
-Both produce `bitstreams/encode_eth_openjls_b<N>.bit.bin` plus the shared
-`openjls.dtbo`, which is exactly what the demo README copies to the board.
-`build_specific_bitness.sh --no-bitstream` rebuilds only the overlay.
+Both write `bitstreams/encode_eth_openjls_b<N>.bit.bin` and the shared
+`openjls.dtbo`; `build_specific_bitness.sh --no-bitstream` rebuilds only the
+overlay. `BITNESS` is fixed at synthesis, hence one bitstream per depth and a PL
+reload per depth in the [verification sweep](../../Verification/README.md).
+After a rebuild, rerun that sweep before committing the bitstreams.
 
-BITNESS is baked in at synthesis, so each pixel depth is its own bitstream —
-that is why there are nine of them and why the verification sweep reloads the
-PL between depths. Why per-depth, and why the 70 MHz clock and SG mode:
-[`INTERNALS.md`](INTERNALS.md).
-
-## The board-side scripts
-
-`setup_bootargs.sh` (here, once per board) and `board_setup.sh` (in
-[`../../Verification/`](../../Verification/board_setup.sh), once per boot) are
-steps 2 and 3 of the [demo README](../../README.md).
-
-## Where to go next
-
-* Running the demo end to end: [`../../README.md`](../../README.md)
-* Rationale, manual bring-up, porting: [`INTERNALS.md`](INTERNALS.md)
-* Byte-exact-vs-CharLS sweep: [`../../Verification/README.md`](../../Verification/README.md)
+`setup_bootargs.sh` (once per board) and
+[`board_setup.sh`](../../Verification/board_setup.sh) (once per boot) are steps
+2 and 3 of the [demo README](../../README.md).
