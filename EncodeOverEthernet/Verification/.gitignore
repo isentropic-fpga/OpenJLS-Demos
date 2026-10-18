@@ -1,6 +1,4 @@
-# Sweep scratch: encoded outputs, cached CharLS goldens, results.csv
+# Sweep scratch; results.csv and report.md are committed
 out/*
 !out/results.csv
-
-# Python bytecode from importing the driver
-__pycache__/
+!out/report.md
