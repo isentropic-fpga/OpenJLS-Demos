@@ -1,15 +1,13 @@
 # PYNQ-Z2 internals, manual bring-up, and porting notes
 
-The [README](README.md) gets you a running board with the pre-built scripts.
-This document is the reference behind those scripts: what each one automates
-step by step, *why* the design is the way it is, and what to change to port it
-to another board. Read this if a script fails, if you're modifying the block
-design, or if you're bringing the demo up on different hardware.
+The reference behind the scripts: what each automates, why the design is
+shaped this way, and how to port it. Read it if a script fails, if you change
+the block design, or if you target other hardware.
 
 ## The design, and why it's shaped this way
 
 PS7 GEM handles Ethernet; `openjls_axis_regs` (the OpenJLS encoder wrapped with
-an AXI-Lite register bank, BITNESS 8, max 65535×65535) and an AXI DMA sit in the
+an AXI-Lite register bank, max 65535×65535) and an AXI DMA sit in the
 PL on a **70 MHz** fabric clock.
 
 **Why 70 MHz.** It is the 1050 MHz DDR PLL divided by 15. The IO PLL can only
@@ -220,11 +218,9 @@ in the order that matters.
 ./ojls_client <board-ip> image.pgm    # writes image.jls
 ```
 
-The strongest end-to-end check: encode an image from the core's golden suite
-(`ThirdParty/OpenJLS/Verification/Golden model`) and `cmp` the result against
-its CharLS-generated `.jls` reference — OpenJLS is byte-exact against CharLS, so
-the files must be identical. The [HIL sweep](../../Verification/README.md)
-automates this across every precision.
+To check it, encode the same PGM with `charls-cli encode` and `cmp` the two
+`.jls` files; they must be identical. The
+[HIL sweep](../../Verification/README.md) does this for the whole corpus.
 
 ### Undo / reload
 
