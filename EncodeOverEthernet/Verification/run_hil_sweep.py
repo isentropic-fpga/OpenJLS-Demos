@@ -405,16 +405,24 @@ def encode_one(args, path):
 
 def write_report(results):
     path = os.path.join(OUT_DIR, "report.md")
-    verdict = {"pass": "PASS", "skip-hw-dims": "SKIP"}
-    n_pass = sum(r[2] == "pass" for r in results)
+    rows = {}
+    for n, _, status, in_b, jls_b in results:
+        r = rows.setdefault(n, [0, 0, 0, 0, 0, 0])
+        r[0] += 1
+        r[1 if status == "pass" else 2 if status.startswith("skip") else 3] += 1
+        r[4] += in_b
+        r[5] += jls_b
+    rows = dict(sorted(rows.items()))
+    rows["**Total**"] = [sum(c) for c in zip(*rows.values())]
     with open(path, "w") as f:
         f.write("# Hardware-in-the-loop results\n\n"
-                "Each image encoded on the PYNQ-Z2 and byte-compared against CharLS.\n\n"
-                "| Image | Depth | Input (B) | JLS (B) | Result |\n|---|--:|--:|--:|---|\n")
-        for n, name, status, in_b, jls_b in results:
-            f.write(f"| {name} | {n} | {in_b} | {jls_b} | {verdict.get(status, 'FAIL')} |\n")
-        f.write(f"| **Total: {len(results)} images** | | **{sum(r[3] for r in results)}** "
-                f"| **{sum(r[4] for r in results)}** | **{n_pass} / {len(results)} PASS** |\n")
+                "Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; "
+                "per-image results are in results.csv.\n\n"
+                "| Depth | Images | Pass | Skip | Fail | Input (B) | JLS checked (B) | Ratio |\n"
+                "|--:|--:|--:|--:|--:|--:|--:|--:|\n")
+        for n, (imgs, ok, skip, fail, in_b, jls_b) in rows.items():
+            ratio = f"{in_b / jls_b:.2f}:1" if jls_b else "-"
+            f.write(f"| {n} | {imgs} | {ok} | {skip} | {fail} | {in_b} | {jls_b} | {ratio} |\n")
     return path
 
 
