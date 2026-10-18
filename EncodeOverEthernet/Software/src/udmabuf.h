@@ -1,15 +1,12 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        udmabuf.h
--- Description: Access layer for u-dma-buf (https://github.com/ikwzm/udmabuf)
---              DMA-coherent buffers.
---
---              Buffers are opened by device name (e.g. "udmabuf-ojls-tx") or
---              discovered by index in /sys/class/u-dma-buf. The mapping is
---              cached for speed; udmabuf_sync_for_device()/_for_cpu() hand
---              ownership between CPU and DMA around each transfer.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* udmabuf.h: u-dma-buf (https://github.com/ikwzm/udmabuf) buffer access */
 
 #ifndef UDMABUF_H
 #define UDMABUF_H

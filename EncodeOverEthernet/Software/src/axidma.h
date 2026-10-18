@@ -1,37 +1,16 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        axidma.h
--- Description: Minimal driver for the Xilinx AXI DMA (PG021) in
---              Scatter/Gather mode.
---
---              SG lets one logical transfer chain several descriptors, so a
---              transfer is no longer capped at the 26-bit (64 MiB) length
---              register — it is bounded only by the DMA buffers (and thus by
---              reservable DRAM). Each channel is driven by a small ring of
---              64-byte descriptors that the caller builds over a contiguous
---              u-dma-buf:
---
---                MM2S reads the pixel bytes and streams them out. The ring is
---                *framed* (SOF on the first descriptor, EOF on the last) so the
---                whole multi-descriptor transfer presents a single TLAST-framed
---                packet to the encoder, exactly as one direct-mode transfer did.
---
---                S2MM writes the encoded stream across the ring until the
---                encoder raises TLAST; the DMA marks that descriptor RXEOF and
---                records the byte count of each descriptor in its status word.
---
---              Completion is detected from the descriptor status written back
---              to DRAM, NOT from the channel's IOC status bit: with a unit
---              interrupt threshold IOC would fire on the first *filled* S2MM
---              descriptor, long before the encoder's TLAST. The wait therefore
---              invalidates and scans the ring (and still checks the status
---              register's error bits for a fast fault path).
---
---              Descriptors live in a caller-provided u-dma-buf region so they
---              are physically addressable by the DMA's M_AXI_SG master and can
---              be cache-synced with the same API as the data buffers.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* axidma.h: Xilinx AXI DMA (PG021) Scatter/Gather driver
+ *
+ * Completion comes from the descriptor status written back to DRAM, not from
+ * the IOC bit: with a unit interrupt threshold, IOC fires on the first filled
+ * S2MM descriptor, long before the encoder's TLAST. */
 
 #ifndef AXIDMA_H
 #define AXIDMA_H

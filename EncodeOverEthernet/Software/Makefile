@@ -1,8 +1,10 @@
-# OpenJLS Ethernet demo — portable C server (board) and client (host).
+# Copyright (C) 2026 Vitor Mendes Camilo
+# SPDX-License-Identifier: GPL-3.0-only
 #
-# Native build (on the board or the host):   make
-# Cross build for a 32-bit ARM board:        make CROSS_COMPILE=arm-linux-gnueabihf-
-# Cross build for a 64-bit ARM board:        make CROSS_COMPILE=aarch64-linux-gnu-
+# This file is part of OpenJLS-Demos. Available under GPLv3 or a
+# commercial license. See LICENSE.md and README.md for details.
+#
+# Makefile: ojls_server (board) and ojls_client (host); cross with CROSS_COMPILE=
 
 CROSS_COMPILE ?=
 CC      := $(CROSS_COMPILE)gcc

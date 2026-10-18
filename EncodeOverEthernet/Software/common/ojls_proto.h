@@ -1,33 +1,17 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        ojls_proto.h
--- Description: OpenJLS demo wire protocol, shared by the board server and the
---              host client.
---
---              Every message is a fixed 20-byte little-endian header followed
---              by an optional payload:
---
---                offset  size  field
---                     0     4  magic        "OJLS" (0x4F4A4C53)
---                     4     2  version      protocol version (1)
---                     6     1  type         message type
---                     7     1  status       0 = OK (responses; 0 in requests)
---                     8     2  width        image width in pixels
---                    10     2  height       image height in pixels
---                    12     1  bitness      bits per pixel (8..16)
---                    13     3  reserved     zero
---                    16     4  payload_len  payload bytes following the header
---
---              ENCODE_REQ payload: raw pixels, row-major, one sample per
---              pixel, right-justified little-endian — 1 byte/pixel for
---              bitness 8, 2 bytes/pixel for bitness 9..16.
---              ENCODE_RESP payload: the encoded .jls stream (empty when
---              status != 0).
---
---              The header is packed/unpacked byte-by-byte so the protocol is
---              independent of host endianness and struct padding.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* ojls_proto.h: demo wire protocol, shared by server and client
+ *
+ * A 20-byte little-endian header, packed byte by byte (no struct padding or
+ * host endianness), then the payload: raw pixels in ENCODE_REQ (row-major,
+ * 1 byte/pixel at bitness 8, else 2 bytes LE), the .jls stream in
+ * ENCODE_RESP (empty when status != 0). */
 
 #ifndef OJLS_PROTO_H
 #define OJLS_PROTO_H

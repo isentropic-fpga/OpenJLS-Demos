@@ -1,9 +1,12 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        udmabuf.c
--- Description: Access layer for u-dma-buf DMA-coherent buffers. See udmabuf.h.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* udmabuf.c: u-dma-buf buffer access */
 
 #include "udmabuf.h"
 

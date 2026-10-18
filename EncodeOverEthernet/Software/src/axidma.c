@@ -1,9 +1,12 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        axidma.c
--- Description: Scatter/Gather AXI DMA driver. See axidma.h.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* axidma.c: Xilinx AXI DMA (PG021) Scatter/Gather driver */
 
 #include "axidma.h"
 
@@ -40,7 +43,6 @@ int axidma_open(struct axidma *d, const char *name_or_path)
         return -1;
     }
 
-    /* Interrupt is a nice-to-have; polling works without it. */
     if (uio_irq_enable(&d->uio) == 0)
         fprintf(stderr, "axidma: %s: interrupt available, waits will sleep on it\n", d->uio.name);
     else
@@ -58,8 +60,7 @@ int axidma_reset(struct axidma *d)
 {
     const int64_t deadline = now_ms() + 100;
 
-    /* Either channel's reset bit resets the whole engine (PG021); set both
-     * for clarity and wait for self-clear. */
+    /* Either channel's reset bit resets the whole engine (PG021). */
     uio_wr(&d->uio, AXIDMA_CR(AXIDMA_MM2S), AXIDMA_CR_RESET);
     uio_wr(&d->uio, AXIDMA_CR(AXIDMA_S2MM), AXIDMA_CR_RESET);
 
@@ -177,8 +178,6 @@ int axidma_wait(struct axidma *d, uint32_t chan, struct axidma_ring *ring, int t
             return -1;
         }
 
-        /* The DMA writes each descriptor's status back to DRAM as it retires
-         * it; invalidate before reading. */
         if (udmabuf_sync_for_cpu(ring->db, ring->off, nbytes) != 0)
             return -1;
 
@@ -199,8 +198,7 @@ int axidma_wait(struct axidma *d, uint32_t chan, struct axidma_ring *ring, int t
         if (chan == AXIDMA_S2MM) {
             if (eof)
                 return 0;
-            /* Every descriptor completed but none carried TLAST: the encoded
-             * stream overran the rx buffer. */
+            /* All descriptors done without TLAST: rx buffer overrun. */
             if ((last & AXIDMA_DESC_CMPLT) != 0) {
                 fprintf(stderr, "axidma: S2MM filled every descriptor without TLAST — "
                         "encoded output exceeded the rx buffer\n");

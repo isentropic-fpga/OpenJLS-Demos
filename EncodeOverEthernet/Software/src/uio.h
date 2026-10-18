@@ -1,19 +1,13 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        uio.h
--- Description: Minimal UIO (Userspace I/O) access layer.
---
---              Devices are located by name: the requested string is matched
---              as a substring of /sys/class/uio/uioN/name, so a device-tree
---              node called "openjls@43c00000" (UIO name "43c00000.openjls")
---              is found by asking for "openjls". An explicit "/dev/uioN"
---              path is also accepted.
---
---              Interrupts are optional: uio_irq_enable() probes whether the
---              device has one wired; uio_irq_wait() then blocks on it. All
---              register access works without an interrupt.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* uio.h: minimal UIO access. Devices are found by a substring of their sysfs
+ * name ("openjls" matches "43c00000.openjls") or by /dev/uioN path. */
 
 #ifndef UIO_H
 #define UIO_H

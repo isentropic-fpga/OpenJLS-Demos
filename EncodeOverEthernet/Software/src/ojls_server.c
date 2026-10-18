@@ -1,30 +1,15 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        ojls_server.c
--- Description: Board-side server of the OpenJLS Ethernet demo.
---
---              Accepts raw images over TCP (see common/ojls_proto.h),
---              encodes them with the OpenJLS JPEG-LS encoder in the PL, and
---              returns the .jls stream. The hardware is reached exclusively
---              through generic Linux interfaces, so the same source runs on
---              any board whose device tree exposes:
---
---                * the openjls_axis_regs register bank as a UIO device,
---                * the AXI DMA register bank as a UIO device (IRQ optional),
---                * three u-dma-buf buffers: pixels in, bitstream out, and the
---                  scatter-gather descriptor rings.
---
---              Per image: validate the request against the hardware CAPS,
---              write WIDTH/HEIGHT + CTRL.APPLY (a 16-cycle core reset pulse
---              during which the dimensions are sampled), arm S2MM with the
---              receive buffer, kick MM2S with the pixels, wait for S2MM
---              completion (the encoder raises TLAST on the last beat), and
---              reply with the encoded bytes reported by the DMA.
---
---              --loopback replaces the hardware with an echo, so the whole
---              network/protocol path can be tested on any machine.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* ojls_server.c: board-side server; encodes TCP image requests on the PL
+ *
+ * Hardware is reached only through UIO (register banks) and u-dma-buf (pixels,
+ * bitstream, SG descriptors), so any board exposing those runs it. */
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -45,8 +30,6 @@
 #include "udmabuf.h"
 #include "uio.h"
 
-/* A view into (part of) a u-dma-buf. Kept as a thin wrapper so the transfer
- * code reads uniformly; with dedicated buffers the offset is always 0. */
 struct dmabuf_region {
     struct udmabuf *b;
     size_t          off;
@@ -95,10 +78,6 @@ static int64_t now_us(void)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
-
-/*-----------------------------------------------------------------------------------------------------------
--- Socket helpers
------------------------------------------------------------------------------------------------------------*/
 
 /* Read exactly len bytes. Returns 0 on success, 1 on orderly EOF before any
  * byte, -1 on error/truncation. */
@@ -171,10 +150,6 @@ static int send_error(int fd, const struct ojls_hdr *req, uint8_t status)
     return send_full(fd, buf, sizeof(buf));
 }
 
-/*-----------------------------------------------------------------------------------------------------------
--- Hardware bring-up
------------------------------------------------------------------------------------------------------------*/
-
 static int hw_open(struct hw *hw, const struct options *opt)
 {
     uint32_t id, version, caps, maxdim;
@@ -206,11 +181,8 @@ static int hw_open(struct hw *hw, const struct options *opt)
     if (axidma_open(&hw->dma, opt->dma_name) != 0)
         return -1;
 
-    /* Three buffers, opened by name (default to the overlay's canonical
-     * names): pixels in, bitstream out, and the SG descriptor rings. Opening
-     * by name — not by discovery order — is deliberate: u-dma-buf enumerates
-     * devices alphabetically, so an index-based scan would put "...-rx" before
-     * "...-tx" and silently swap the tx/rx roles. */
+    /* By name, not index: u-dma-buf enumerates alphabetically, so "-rx" would
+     * come before "-tx" and swap the roles. */
     {
         const char *tx_name   = (opt->tx_buf   != NULL) ? opt->tx_buf   : "udmabuf-ojls-tx";
         const char *rx_name   = (opt->rx_buf   != NULL) ? opt->rx_buf   : "udmabuf-ojls-rx";
@@ -276,14 +248,8 @@ static void hw_recover(struct hw *hw, uint16_t width, uint16_t height)
     hw_configure(hw, width, height);
 }
 
-/*-----------------------------------------------------------------------------------------------------------
--- Request handling
------------------------------------------------------------------------------------------------------------*/
-
-/* Serve one ENCODE_REQ whose header has already been validated and whose
- * payload is already in the tx buffer. On success sends the response itself
- * and returns 0; on hardware trouble returns the (positive) status code for
- * the caller to report. */
+/* Payload already in the tx buffer. Returns 0 once replied, a status code for
+ * the caller to send, or -1 on socket error. */
 static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, int timeout_ms)
 {
     const uint32_t in_bytes  = req->payload_len;
@@ -301,10 +267,8 @@ static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, i
     if (udmabuf_sync_for_device(hw->tx.b, hw->tx.off, in_bytes) != 0)
         return OJLS_ST_HW_ERROR;
 
-    /* Fresh engine per image so no residual SG state carries over, then build
-     * the two descriptor rings in their own buffer: S2MM spans the whole rx
-     * buffer (the DMA stops early on the encoder's TLAST); MM2S is framed so
-     * the pixels present as one packet however many descriptors they take. */
+    /* S2MM spans the whole rx buffer and stops on the encoder's TLAST; MM2S is
+     * framed so the pixels form one packet across its descriptors. */
     if (axidma_reset(&hw->dma) != 0)
         return OJLS_ST_HW_ERROR;
 
@@ -319,7 +283,6 @@ static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, i
 
     t0 = now_us();
 
-    /* Arm the receive side before feeding pixels. */
     if (axidma_sg_start(&hw->dma, AXIDMA_S2MM, &s2mm) != 0 ||
         axidma_sg_start(&hw->dma, AXIDMA_MM2S, &mm2s) != 0)
         return OJLS_ST_HW_ERROR;
@@ -336,8 +299,6 @@ static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, i
 
     t1 = now_us();
 
-    /* TLAST ended the transfer; sum the descriptor byte counts for the actual
-     * encoded length (axidma_wait already synced the ring for the CPU). */
     out_bytes = axidma_ring_bytes(&s2mm);
 
     if (udmabuf_sync_for_cpu(hw->rx.b, hw->rx.off, out_bytes) != 0)
@@ -365,7 +326,6 @@ static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, i
     return 0;
 }
 
-/* Loopback: no hardware, echo the payload back. */
 static int loopback_reply(int fd, const struct ojls_hdr *req, const uint8_t *payload)
 {
     struct ojls_hdr resp = *req;
@@ -406,8 +366,7 @@ static int serve_connection(int fd, struct hw *hw, const struct options *opt)
             break;
         ojls_hdr_unpack(&req, hdr_raw);
 
-        /* Protocol-level validation: a bad magic means the byte stream is
-         * not ours — reply and drop the connection. */
+        /* Bad magic: not our stream, so drop the connection. */
         if (req.magic != OJLS_PROTO_MAGIC) {
             send_error(fd, &req, OJLS_ST_BAD_MAGIC);
             rc = -1;
@@ -435,9 +394,8 @@ static int serve_connection(int fd, struct hw *hw, const struct options *opt)
                      req.height < OJLS_MIN_HEIGHT || req.height > hw->max_height)
                 st = OJLS_ST_BAD_DIMS;
             else if (req.payload_len > hw->tx.size ||
-                     /* Conservative room for incompressible input: raw size
-                      * + 25% + slack. A still-too-small buffer is caught by
-                      * the DMA (missing TLAST -> error), not corrupted. */
+                     /* Headroom for incompressible input; an overrun is still
+                      * caught as a missing TLAST, not corrupted. */
                      (uint64_t)req.payload_len + req.payload_len / 4 + 4096 > hw->rx.size)
                 st = OJLS_ST_TOO_LARGE;
         }
@@ -468,7 +426,6 @@ static int serve_connection(int fd, struct hw *hw, const struct options *opt)
             continue;
         }
 
-        /* Pixels land straight in the DMA buffer — no intermediate copy. */
         if (recv_full(fd, region_mem(&hw->tx), req.payload_len) != 0) {
             rc = -1;
             break;
@@ -488,10 +445,6 @@ static int serve_connection(int fd, struct hw *hw, const struct options *opt)
     free(loop_buf);
     return rc;
 }
-
-/*-----------------------------------------------------------------------------------------------------------
--- Main
------------------------------------------------------------------------------------------------------------*/
 
 static void usage(const char *argv0)
 {

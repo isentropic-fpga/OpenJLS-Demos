@@ -1,9 +1,12 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        uio.c
--- Description: Minimal UIO (Userspace I/O) access layer. See uio.h.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* uio.c: minimal UIO access */
 
 #include "uio.h"
 
@@ -86,7 +89,6 @@ int uio_open(struct uio *u, const char *name_or_path)
         return -1;
     }
 
-    /* Size of the first (and only, for our IPs) register map. */
     snprintf(size_path, sizeof(size_path), "/sys/class/uio/%s/maps/map0/size", u->dev + 5);
     if (sysfs_read_line(size_path, attr, sizeof(attr)) != 0) {
         fprintf(stderr, "uio: cannot read %s: %s\n", size_path, strerror(errno));

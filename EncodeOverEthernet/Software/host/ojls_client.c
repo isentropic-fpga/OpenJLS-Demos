@@ -1,18 +1,12 @@
-/*-----------------------------------------------------------------------------------------------------------
--- Engineer:    Vitor Mendes Camilo
---
--- File:        ojls_client.c
--- Description: Host-side client of the OpenJLS Ethernet demo.
---
---              Reads a binary PGM (P5, 8- or 16-bit grayscale), sends it to
---              the board server (see common/ojls_proto.h), and stores the
---              returned .jls stream. Prints round-trip time and throughput.
---
---              The pixel bitness is derived from the PGM maxval (e.g.
---              maxval 255 -> 8, maxval 4095 -> 12) and must match the
---              BITNESS the hardware was synthesized with; use -b to override
---              when the maxval understates the intended depth.
------------------------------------------------------------------------------------------------------------*/
+/*
+ * Copyright (C) 2026 Vitor Mendes Camilo
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * This file is part of OpenJLS-Demos. Available under GPLv3 or a
+ * commercial license. See LICENSE.md and README.md for details.
+ */
+
+/* ojls_client.c: host client; sends a PGM to the board, writes the .jls */
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -73,10 +67,6 @@ static int send_full(int fd, const void *buf, size_t len)
     return 0;
 }
 
-/*-----------------------------------------------------------------------------------------------------------
--- PGM (P5) loading
------------------------------------------------------------------------------------------------------------*/
-
 /* Skip whitespace and '#' comments, then parse one unsigned decimal. */
 static int pgm_token(FILE *f, unsigned long *out)
 {
@@ -100,8 +90,7 @@ static int pgm_token(FILE *f, unsigned long *out)
         *out = *out * 10 + (unsigned long)(c - '0');
         c = fgetc(f);
     } while (isdigit(c));
-    /* c is the single whitespace that terminates the token — consumed, as
-     * the PGM spec requires after maxval. */
+    /* The terminating whitespace is consumed, as PGM requires after maxval. */
     return 0;
 }
 
@@ -162,8 +151,7 @@ static int pgm_load(const char *path, struct image *img)
     }
     fclose(f);
 
-    /* PGM stores 16-bit samples big-endian; the wire (and the hardware DMA
-     * buffer) wants little-endian. */
+    /* PGM is big-endian, the wire little-endian. */
     if (maxval > 255) {
         for (size_t i = 0; i < npix; i++) {
             const uint8_t hi = img->pixels[2 * i];
@@ -175,10 +163,6 @@ static int pgm_load(const char *path, struct image *img)
 
     return 0;
 }
-
-/*-----------------------------------------------------------------------------------------------------------
--- Main
------------------------------------------------------------------------------------------------------------*/
 
 static void usage(const char *argv0)
 {
