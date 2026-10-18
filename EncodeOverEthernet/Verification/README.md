@@ -1,84 +1,70 @@
 # Hardware-in-the-loop verification
 
-> The verification half of the [EncodeOverEthernet](../README.md) demo. Set the
-> board up by following that README first (through step 3), then come back —
-> or just run `./run_hil_sweep.py --dry-run`, which tells you what is missing.
+> Bring the board up with the [demo README](../README.md) (through step 3)
+> first, or run `./run_hil_sweep.py --dry-run` to see what is missing.
 
-Drives the PYNQ-Z2 through the OpenJLS golden corpus, one encoder pixel depth at
-a time, and byte-compares every hardware-encoded `.jls` against a CharLS
-reference — the **same oracle** the simulation golden model uses. A pass proves
-the silicon reproduces CharLS exactly, across `BITNESS` 8..16.
+Encodes the OpenJLS golden corpus on the PYNQ-Z2, one pixel depth at a time,
+and byte-compares every `.jls` against CharLS, the same reference the core's
+golden-model simulation uses. A pass means the silicon matches CharLS exactly
+at `BITNESS` 8..16, including the full-size originals too large to simulate.
 
-This is a *consumer* of the core's verification assets, not an owner of them.
-The image corpus, the CharLS reference encoder, and the T.87 trust vectors all
-live in the OpenJLS submodule and are produced by its scripts; this harness only
-orchestrates the board, the transport, and the comparison. Nothing is
-duplicated.
+The corpus, CharLS and the T.87 reference images belong to the
+`ThirdParty/OpenJLS` submodule; this harness only drives the board and
+compares. Its report, [`out/report.md`](out/report.md), is what the
+hardware-in-the-loop row of the core's
+[verification report](https://isentropic-fpga.github.io/OpenJLS/) links to, next
+to the OSVVM, golden-model and post-synthesis suites run in simulation.
 
 ## How it works
 
-The corpus is not organized by depth — each image carries its own via its
-PGM maxval (255→8, 4095→12, 65535→16). The driver buckets images by that
-(exactly as the client derives it) and, for each depth `N`:
+Each image's depth comes from its PGM maxval (255→8, 4095→12, 65535→16), as in
+the client. First, CharLS must reproduce the official T.87 file `T16E0.JLS`
+byte-exact. Then, per depth `N`:
 
-1. reloads `bitstreams/encode_eth_openjls_b<N>.bit.bin` on the board and
-   restarts the server (`board_reload.sh`, over ssh, as root);
-2. sends every image in that bucket through `ojls_client`;
-3. `cmp`s each result against its CharLS golden; tallies pass/fail/skip.
+1. `board_reload.sh` (over ssh, as root) loads
+   `bitstreams/encode_eth_openjls_b<N>.bit.bin` and restarts the server;
+2. every image of depth `N` goes through `ojls_client`;
+3. each result is `cmp`'d against its CharLS golden.
 
-The server restart in step 1 is load-bearing: it reads the hardware `BITNESS`
-from the CAPS register **once at startup** and rejects mismatched requests, so a
-still-running server would reject the whole new bucket after a reload. The
-device-tree overlay and `u-dma-buf` are depth-independent and stay loaded.
+The restart matters: the server reads `BITNESS` from the CAPS register once at
+startup and rejects other depths. The overlay and `u-dma-buf` are
+depth-independent and stay loaded.
 
 ## Files
 
-| file | runs on | what |
+| File | Runs on | What |
 |---|---|---|
-| `run_hil_sweep.py` | host | orchestrator: preflight, CharLS gate, bucket, per-depth reload + encode + compare, report |
-| `board_setup.sh`   | board | **one-shot bring-up after a power cycle**: load PL, verify the boot-time overlay + DMA carveout, load `u-dma-buf`, verify buffers, start server |
-| `board_reload.sh`  | board | lighter per-depth path: reload a depth's bitstream + restart the server (copied over by the driver) |
+| `run_hil_sweep.py` | host | preflight, CharLS check, per-depth reload + encode + compare, report |
+| `board_setup.sh` | board | bring-up after a power cycle: PL, overlay check, `u-dma-buf`, server |
+| `board_reload.sh` | board | per-depth bitstream reload + server restart (staged by the driver) |
 
 ## Prerequisites
 
-Produced by the core / demo, checked by the driver's preflight (which prints the
-exact command for anything missing). The first three live in the
-`ThirdParty/OpenJLS` submodule — `git submodule update --init --recursive`
-first if it's empty:
+Preflight checks each and prints the command for anything missing.
 
 - **Corpus** — `ThirdParty/OpenJLS/Verification/Golden model/prepare_images.sh`
-  (fetches the curated public datasets + synthesizes the depth/boundary probes).
-- **CharLS** — `ThirdParty/OpenJLS/ThirdParty/fetch_third_party.sh charls`.
-- **T.87 trust vectors** (for the gate) —
-  `ThirdParty/OpenJLS/Verification/T87 conformance/fetch_reference_images.sh`.
-- **Client** — `make -C ../Software ojls_client`.
-- **Bitstreams** — `../Hardware/pynq-z2/build_all_bitness.sh`.
-- **Board** — set up through step 3 of the [demo README](../README.md): server
-  built on the board, `setup_bootargs.sh` done once, `board_setup.sh` run this
-  boot. Plus **key-based** ssh auth, which the demo doesn't need but the sweep
-  does — once: `ssh-copy-id xilinx@192.168.2.99` (stock password `xilinx`).
-  The driver stages the bitstreams and the reload script itself.
+- **CharLS** — `ThirdParty/OpenJLS/ThirdParty/fetch_third_party.sh charls`
+- **T.87 reference images** — `ThirdParty/OpenJLS/Verification/T87 conformance/fetch_reference_images.sh`
+- **Client** — `make -C ../Software ojls_client`
+- **Board** — through step 3 of the [demo README](../README.md), plus an ssh
+  key (`ssh-copy-id xilinx@192.168.2.99`). The driver stages the bitstreams
+  and `board_reload.sh` itself.
 
 ## Running
 
 ```sh
-# Preview the corpus depth histogram and check prerequisites — no board needed:
-./run_hil_sweep.py --dry-run
-
-# Full sweep (defaults to BOARD=xilinx@192.168.2.99, SUDO_PASS=xilinx):
-./run_hil_sweep.py
-
-# Subset of depths, few images each (smoke test):
-./run_hil_sweep.py --bitness 8 12 --limit 5
+./run_hil_sweep.py --dry-run               # preflight + depth histogram, no board needed
+./run_hil_sweep.py                         # full sweep
+./run_hil_sweep.py --bitness 8 12 --limit 5  # smoke test
 ```
 
-Exit status is non-zero if any image mismatched or errored. Per-image results
-land in `out/results.csv`; encoded outputs and cached goldens under `out/`
-(git-ignored).
+Exit status is non-zero on any mismatch or error. The sweep writes
+`out/results.csv` and `out/report.md` (per image: name, depth, bytes in and
+out, pass/fail, plus a total row). Both are committed; the encoded outputs and
+cached goldens are not.
 
-Configuration is entirely via environment — see the header of
-`run_hil_sweep.py` for every variable and its default. Key ones: `BOARD` /
-`SUDO_PASS` (default to the standard bench setup above; set a different target
-or `BOARD=` empty for dry-run-only), `SSH_KEY`,
-`BITSTREAM_DIR`/`IMAGES_DIR`/`FULL_IMAGES_DIR`/`CHARLS`/`CLIENT` overrides (`FULL_IMAGES_DIR` holds the full-size originals the corpus slices into strips; swept when present),
-and `TX_BYTES` (images larger than the board tx buffer are skipped, not failed).
+Configuration is by environment variable, documented in the header of
+`run_hil_sweep.py`. The usual ones: `BOARD` (default `xilinx@192.168.2.99`),
+`SUDO_PASS` (default `xilinx`), `SSH_KEY`, path overrides (`IMAGES_DIR`,
+`FULL_IMAGES_DIR`, `CHARLS`, `CLIENT`, `BITSTREAM_DIR`) and `TX_BYTES` (images
+above the board tx buffer are skipped, not failed).
