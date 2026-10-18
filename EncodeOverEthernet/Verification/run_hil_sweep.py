@@ -1,62 +1,37 @@
 #!/usr/bin/env python3
-"""Hardware-in-the-loop bitness sweep for the EncodeOverEthernet demo.
+# Copyright (C) 2026 Vitor Mendes Camilo
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# This file is part of OpenJLS-Demos. Available under GPLv3 or a
+# commercial license. See LICENSE.md and README.md for details.
+#
+"""run_hil_sweep.py: byte-exact HIL sweep of the OpenJLS corpus vs CharLS
 
-Drives the PYNQ-Z2 through the OpenJLS golden corpus, one encoder precision at a
-time, and byte-compares every hardware-encoded .jls against a CharLS reference —
-the same oracle the simulation golden model uses, so a pass here means the
-silicon reproduces CharLS exactly.
+Per depth N (8..16, from each PGM's maxval, as the client derives it): reload
+encode_eth_openjls_b<N>.bit.bin with board_reload.sh, encode every depth-N
+image on the board, cmp each against its CharLS golden.
 
-Per precision N (BITNESS 8..16):
-  1. reload bitstreams/encode_eth_openjls_b<N>.bit.bin on the board and restart
-     the server (board_reload.sh, over ssh, as root);
-  2. send every corpus image whose native precision is N through the client;
-  3. cmp each result against its CharLS golden; tally.
-
-The corpus is NOT organized by precision — each image carries its own via its
-PGM maxval (255->8, 4095->12, 65535->16). We bucket by that, exactly as the
-client derives it: bitness = max(8, bit_length(maxval)), 2 bytes/pixel above
-maxval 255. Buckets with no committed bitstream, or no images, are reported and
-skipped.
-
-This owns none of the corpus or the reference encoder: both live in the OpenJLS
-submodule and are produced by its scripts. Missing prerequisites are reported
-with the exact command to run, not worked around.
-
-Configuration (all via environment, sensible defaults for the in-tree layout):
-  BOARD            ssh target for the board (default: xilinx@192.168.2.99, the
-                   address the READMEs standardize on; set BOARD= empty to
-                   force --dry-run-only use). Key-based auth only — set up a
-                   key first.
-  BOARD_IP         board IP the client connects to (default: host part of BOARD)
-  SSH_KEY          path to an ssh private key (optional)
-  SSH_OPTS         extra ssh/scp options (optional)
-  SUDO_PASS        board sudo password (default: xilinx, the PYNQ stock
-                   password). Set SUDO_PASS= empty for passwordless `sudo`.
-  BOARD_HOME       board home dir (default: /home/<user-of-BOARD>)
-  BOARD_SERVER_DIR dir holding the built ojls_server on the board
-                   (default: $BOARD_HOME/Software)
-  BOARD_BS_DIR     dir to stage bitstreams on the board
-                   (default: $BOARD_HOME/bitstreams)
-  BITSTREAM_DIR    host dir of encode_eth_openjls_b*.bit.bin
-  IMAGES_DIR       host dir of prepared corpus PGMs
-  FULL_IMAGES_DIR  host dir of the full-size originals the corpus slices to
-                   strips (default: Images_full beside IMAGES_DIR); swept too
-                   when present. Set FULL_IMAGES_DIR= empty to skip them.
-  CHARLS           path to charls-cli
-  CLIENT           path to the host ojls_client
-  OUT_DIR          scratch for goldens / encoded outputs / results.csv
-  PORT             server TCP port (default 19020)
-  TX_BYTES         board tx buffer cap; images above it are skipped (default 128M,
-                   the scatter-gather overlay's udmabuf-ojls-tx size)
-  HW_MAX_W         hardware max image width; wider images are skipped (default
-  HW_MAX_H         / height   65535, the packaged IP's MAXDIM ceiling; the
-                   server still enforces the true synthesized OJLS_REG_MAXDIM)
+Environment (defaults suit the in-tree layout):
+  BOARD            ssh target (default xilinx@192.168.2.99; key auth only;
+                   empty = --dry-run only)
+  BOARD_IP         address the client connects to (default: host of BOARD)
+  SSH_KEY, SSH_OPTS
+  SUDO_PASS        board sudo password (default xilinx; empty = passwordless)
+  BOARD_HOME       default /home/<user of BOARD>
+  BOARD_SERVER_DIR dir of the built ojls_server (default $BOARD_HOME/Software)
+  BOARD_BS_DIR     bitstream staging dir (default $BOARD_HOME/bitstreams)
+  BITSTREAM_DIR, IMAGES_DIR, CHARLS, CLIENT, OUT_DIR
+  FULL_IMAGES_DIR  full-size originals (default Images_full beside IMAGES_DIR;
+                   empty = skip)
+  PORT             server port (default 19020)
+  TX_BYTES         board tx buffer; larger images are skipped (default 128M)
+  HW_MAX_W/H       max image size; larger are skipped (default 65535)
 
 Usage:
-  ./run_hil_sweep.py                 # full sweep over every available depth
-  ./run_hil_sweep.py --dry-run       # preflight + bucket histogram, no encoding
+  ./run_hil_sweep.py                 # full sweep
+  ./run_hil_sweep.py --dry-run       # preflight + depth histogram
   ./run_hil_sweep.py --bitness 8 12  # only these depths
-  ./run_hil_sweep.py --limit 5       # at most 5 images per bucket (smoke test)
+  ./run_hil_sweep.py --limit 5       # at most 5 images per depth
 """
 import argparse
 import csv
@@ -85,11 +60,8 @@ CLIENT = env("CLIENT", os.path.join(DEMO, "Software", "ojls_client"))
 OUT_DIR = env("OUT_DIR", os.path.join(HERE, "out"))
 PORT = int(env("PORT", "19020"))
 TX_BYTES = int(env("TX_BYTES", str(128 * 1024 * 1024)))
-# The shipped bitstreams are built with MAX_IMAGE_WIDTH/HEIGHT {65535}
-# (design_encode_ethernet.tcl), the IP's ceiling and the JPEG-LS spec max.
-# The server reads the true synthesized limits from OJLS_REG_MAXDIM and
-# rejects anything larger, so this host-side pre-skip is only a convenience
-# for down-sized custom builds (override via HW_MAX_W / HW_MAX_H).
+# The server enforces the real OJLS_REG_MAXDIM; this pre-skip only saves
+# round trips on down-sized builds.
 HW_MAX_W = int(env("HW_MAX_W", "65535"))
 HW_MAX_H = int(env("HW_MAX_H", "65535"))
 
@@ -169,9 +141,7 @@ def wait_for_port(ip, port, timeout=25.0):
     return False
 
 
-# One ssh round-trip that reports everything the sweep needs from the board.
-# Emits "kind:name:value" lines so the host can name the *specific* missing
-# piece instead of inferring one from a dead TCP port.
+# One ssh round trip; "kind:name:value" lines name the specific missing piece.
 PROBE_SH = r"""set -u
 for n in tx rx desc; do
   d=/sys/class/u-dma-buf/udmabuf-ojls-$n
@@ -195,21 +165,10 @@ def _mib(n):
 
 
 def board_probe(args):
-    """Verify over ssh that the board can actually serve, before we sweep it.
+    """Check over ssh that the board can serve; returns (problems, notes).
 
-    Every other preflight check is a host-side file. Without this one a sweep
-    passes preflight and then dies ~25 s later inside reload_board() with
-    "server did not open <ip>:<port>" — the symptom of a server that exited at
-    startup, not a cause. The two failure modes that produce it are distinct
-    and have different fixes, so name them apart:
-
-      * boot-time overlay absent (UIO nodes / reserved-memory carveout) ->
-        first-time setup never ran, or U-Boot fell back to a stock boot;
-      * carveout live but no u-dma-buf -> the board was rebooted and the
-        one-shot bring-up has not been re-run. board_reload.sh, the per-depth
-        path the sweep drives, deliberately does not load the module.
-
-    Returns (problems, notes); the caller decides whether problems are fatal.
+    Tells apart a missing boot-time overlay (setup_bootargs.sh) from a missing
+    u-dma-buf after a reboot (board_setup.sh); board_reload.sh loads neither.
     """
     problems, notes = [], []
     sh = PROBE_SH.replace("@SERVER@", shlex.quote(args.board_server_dir))
@@ -223,10 +182,7 @@ def board_probe(args):
                 notes)
     out = r.stdout.decode(errors="replace").strip()
     if r.returncode != 0:
-        # ssh exits 255 for "couldn't connect" and "connected but wouldn't let
-        # me in" alike, and the fixes are opposites: power/cable the board vs.
-        # install a key. Telling someone whose board is unplugged to run
-        # ssh-copy-id sends them down the wrong path, so split on the message.
+        # ssh exits 255 for both unreachable and auth failure; the fixes differ.
         low = out.lower()
         unreachable = any(s in low for s in (
             "connection timed out", "connection refused", "no route to host",
@@ -384,12 +340,7 @@ def preflight(args):
     if not args.dry_run and not args.board:
         problems.append("BOARD is required for a live sweep (or pass --dry-run)")
 
-    # The board itself. Everything above is a host-side file; this is the only
-    # check that can catch a board that will accept the sweep and then fail to
-    # serve it. Skipped when no board is configured (BOARD= empty), so the
-    # no-board --dry-run documented above still works. On a dry run its
-    # findings are warnings rather than errors: --dry-run reports, it doesn't
-    # gate.
+    # On --dry-run, board findings are warnings.
     if args.board:
         board_problems, notes = board_probe(args)
         for n in notes:
@@ -414,7 +365,6 @@ def reload_board(args, bitness):
 
     scp = scp_prefix(args.ssh_key, args.ssh_opts)
     run(scp + [BOARD_RELOAD, f"{args.board}:{board_home}/board_reload.sh"], "scp reload script")
-    # stage the bitstream (idempotent; ~4 MB)
     run(ssh_prefix(args.board, args.ssh_key, args.ssh_opts) + [f"mkdir -p {shlex.quote(bs_dir)}"],
         "mkdir board bitstream dir")
     run(scp + [local_bs, f"{args.board}:{bs_dir}/{fw}"], "scp bitstream")
@@ -440,15 +390,32 @@ def encode_one(args, path):
     stem = os.path.splitext(os.path.basename(path))[0]
     out_jls = os.path.join(OUT_DIR, "encoded", stem + ".jls")
     os.makedirs(os.path.dirname(out_jls), exist_ok=True)
+    if os.path.exists(out_jls):
+        os.remove(out_jls)
     cmd = [CLIENT, "-p", str(PORT), args.board_ip, path, out_jls]
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
     if r.returncode != 0:
         lines = r.stdout.decode(errors="replace").strip().splitlines()
         raise Fail("client: " + (" | ".join(lines) if lines else "failed"))
     golden = os.path.join(OUT_DIR, "golden", stem + ".jls")
-    if not os.path.exists(golden):
+    if not os.path.exists(golden) or os.path.getmtime(golden) < os.path.getmtime(path):
         charls_encode(path, golden)
     return out_jls, golden
+
+
+def write_report(results):
+    path = os.path.join(OUT_DIR, "report.md")
+    verdict = {"pass": "PASS", "skip-hw-dims": "SKIP"}
+    n_pass = sum(r[2] == "pass" for r in results)
+    with open(path, "w") as f:
+        f.write("# Hardware-in-the-loop results\n\n"
+                "Each image encoded on the PYNQ-Z2 and byte-compared against CharLS.\n\n"
+                "| Image | Depth | Input (B) | JLS (B) | Result |\n|---|--:|--:|--:|---|\n")
+        for n, name, status, in_b, jls_b in results:
+            f.write(f"| {name} | {n} | {in_b} | {jls_b} | {verdict.get(status, 'FAIL')} |\n")
+        f.write(f"| **Total: {len(results)} images** | | **{sum(r[3] for r in results)}** "
+                f"| **{sum(r[4] for r in results)}** | **{n_pass} / {len(results)} PASS** |\n")
+    return path
 
 
 def main():
@@ -561,6 +528,7 @@ def main():
         wtr = csv.writer(f)
         wtr.writerow(["bitness", "image", "status", "in_bytes", "jls_bytes"])
         wtr.writerows(results)
+    report_path = write_report(results)
 
     # -- summary
     print("\n==================== summary ====================")
@@ -571,7 +539,7 @@ def main():
         flag = "OK" if fl == 0 else "FAIL"
         print(f"  b{n:<2}: {p:4d} pass  {fl:4d} fail  {sk:4d} skip   [{flag}]")
     print(f"  all: {tot_pass} pass, {tot_fail} fail, {tot_skip} skip")
-    print(f"  results: {csv_path}")
+    print(f"  results: {csv_path}, {report_path}")
     sys.exit(1 if tot_fail else 0)
 
 
