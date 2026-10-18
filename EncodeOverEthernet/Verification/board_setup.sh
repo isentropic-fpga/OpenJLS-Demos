@@ -1,38 +1,17 @@
 #!/usr/bin/env bash
-# Board-side (PYNQ-Z2, run as root): one-shot bring-up after a power cycle.
+# Copyright (C) 2026 Vitor Mendes Camilo
+# SPDX-License-Identifier: GPL-3.0-only
 #
-# Collapses the manual "On the board" sequence from
-# ../Hardware/pynq-z2/INTERNALS.md (load PL -> load u-dma-buf -> start server)
-# into a single idempotent command. Safe to re-run: it tears down what it owns
-# (server, module) and rebuilds it.
+# This file is part of OpenJLS-Demos. Available under GPLv3 or a
+# commercial license. See LICENSE.md and README.md for details.
 #
-# The UIO register nodes and the DMA-buffer nodes come from openjls.dtbo,
-# which U-Boot applies AT BOOT (installed once per board by
-# ../Hardware/pynq-z2/setup_bootargs.sh). The buffers allocate from an
-# exclusive reserved-memory carveout, so there is no CMA sizing or
-# fragmentation dance here: if the carveout is live, insmod'ing u-dma-buf
-# just works — at any uptime, deterministically. If it is missing (first-time
-# setup never ran, or its uenvcmd fell back to a stock boot), this script
-# stops early and says so rather than fighting the CMA pool.
+# board_setup.sh: PYNQ-Z2 bring-up after a power cycle (as root, idempotent)
 #
-# For swapping precisions on an already-set-up board (u-dma-buf stays loaded,
-# only the PL image and server cycle), use board_reload.sh instead — it's the
-# lighter, per-bitness path the HIL sweep drives.
+# Needs the boot-time overlay from setup_bootargs.sh; stops early if its DMA
+# carveout is missing. For depth swaps on a set-up board, use board_reload.sh.
 #
-# Usage (on the board, as root; scripts use $HOME so run under the login user):
-#   sudo env HOME=/home/xilinx board_setup.sh [bitness] [server_dir] [fw_dir] [bs_dir]
-#
-#   bitness      encoder precision to load (8..16, default 8). The server
-#                latches this from the CAPS register; any depth works to set up.
-#   server_dir   dir holding the built ojls_server    (default $HOME/Software)
-#   fw_dir       FPGA-manager firmware dir            (default /lib/firmware)
-#   bs_dir       dir holding encode_eth_openjls_b*.bit.bin (default $HOME/bitstreams)
-#
-# Artifacts expected on the board (put there once by scp or git clone):
-#   $bs_dir/encode_eth_openjls_b<bitness>.bit.bin   the PL image
-#   $HOME/u-dma-buf.ko                              the u-dma-buf module
-#   $server_dir/ojls_server                         the built server
-# (openjls.dtbo is NOT used here — setup_bootargs.sh installs it in /boot.)
+# Usage: sudo env HOME=$HOME board_setup.sh [bitness=8] [server_dir] [fw_dir] [bs_dir]
+#   defaults: $HOME/Software, /lib/firmware, $HOME/bitstreams; module $HOME/u-dma-buf.ko
 set -euo pipefail
 
 b="${1:-8}"
@@ -45,7 +24,6 @@ fw="encode_eth_openjls_b${b}.bit.bin"
 src="$bs_dir/$fw"
 ov=/sys/kernel/config/device-tree/overlays/openjls   # legacy runtime overlay
 
-# --- preflight: fail early and specifically on a missing artifact ------------
 [ -f "$src" ]                  || { echo "missing bitstream: $src" >&2; exit 1; }
 [ -f "$module" ]              || { echo "missing module: $module" >&2; exit 1; }
 [ -x "$server_dir/ojls_server" ] || { echo "missing server: $server_dir/ojls_server" >&2; exit 1; }
@@ -53,9 +31,8 @@ ov=/sys/kernel/config/device-tree/overlays/openjls   # legacy runtime overlay
 echo "=== 1. stop server + unload u-dma-buf (idempotent teardown) ==="
 pkill -f '[o]jls_server' 2>/dev/null || true
 sleep 0.3
-rmmod u-dma-buf 2>/dev/null || true     # so it re-binds cleanly
-# A configfs overlay is the pre-carveout flow; its u-dma-buf nodes shadow the
-# boot-time ones (and can't reserve memory), so clear any stale one out.
+rmmod u-dma-buf 2>/dev/null || true
+# A stale configfs overlay's u-dma-buf nodes would shadow the boot-time ones.
 [ -d "$ov" ] && { echo "(removing stale runtime overlay)"; rmdir "$ov" 2>/dev/null || true; }
 
 echo "=== 2. load PL image ($fw) ==="
