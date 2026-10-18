@@ -59,9 +59,10 @@ Preflight checks each and prints the command for anything missing.
 ```
 
 Exit status is non-zero on any mismatch or error. The sweep writes
-`out/results.csv` and `out/report.md` (per image: name, depth, bytes in and
-out, pass/fail, plus a total row). Both are committed; the encoded outputs and
-cached goldens are not.
+`out/results.csv` (per image: depth, name, status, bytes in and out) and
+`out/report.md` (per depth: images, pass/skip/fail, bytes in and checked,
+ratio, plus a total row). Both are committed; the encoded outputs and cached
+goldens are not.
 
 Configuration is by environment variable, documented in the header of
 `run_hil_sweep.py`. The usual ones: `BOARD` (default `xilinx@192.168.2.99`),
