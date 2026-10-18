@@ -1,67 +1,18 @@
-// OpenJLS EncodeOverEthernet demo — PYNQ-Z2 device tree overlay.
+// Copyright (C) 2026 Vitor Mendes Camilo
+// SPDX-License-Identifier: GPL-3.0-only
 //
-// Matches the block design address map:
-//   0x4000_0000  openjls_axis_regs register bank (4K)
-//   0x4040_0000  AXI DMA registers (64K)
+// This file is part of OpenJLS-Demos. Available under GPLv3 or a
+// commercial license. See LICENSE.md and README.md for details.
 //
-// APPLIED AT BOOT, NOT AT RUNTIME. setup_bootargs.sh installs a `uenvcmd`
-// in /boot/uEnv.txt that makes U-Boot extract the kernel's DTB from
-// image.ub, `fdt apply` this overlay onto it, and boot the result. It has
-// to happen there: the reserved-memory carveout below is only honored if
-// the kernel sees it at *early* boot. A runtime (configfs) overlay is
-// applied long after the memblock allocator has finalized — the nodes
-// would show up in the live tree but reserve nothing, and the u-dma-buf
-// probes, whose `memory-region` links can then never initialize, would
-// fail. board_setup.sh therefore only *verifies* that this overlay is
-// live and refuses to run otherwise.
+// openjls.dtso: PYNQ-Z2 overlay: UIO for the core and DMA, carveout-backed u-dma-bufs
 //
-// Why a carveout instead of allocating from the CMA pool (the previous
-// design): CMA is reserved-but-shared. Linux lends the CMA region to
-// movable pages (pagecache, process memory) until a driver asks for it
-// back, and reclaiming relies on page migration — which proved unreliable
-// on this kernel (6.6.10-xilinx, CONFIG_COMPACTION off): minutes after
-// boot, pages that land in the pool pin it and the 100+ MiB allocations
-// fail with ENOMEM no matter how large `cma=` is. The buffers only
-// allocated reliably in the first seconds after boot. A `no-map`
-// carveout is exclusive — the kernel never lends it out — so u-dma-buf
-// allocation succeeds at any uptime, deterministically.
+// U-Boot applies it at boot (setup_bootargs.sh); a runtime configfs overlay
+// reserves nothing. no-map pools round each allocation up to a power of two,
+// so keep every buffer equal to its pool and a power of two. PYNQ's own
+// fabric@40000000 UIO node overlaps ours harmlessly: UIO does not request the
+// region, and the server picks its devices by name.
 //
-// Sizing rule: `no-map` pools are served by the kernel's per-device
-// coherent allocator, which rounds every allocation up to a power of two.
-// Keep each buffer size (and its pool) a power of two or the allocation
-// will silently need the next size up. Current map, at the top of the
-// PYNQ-Z2's 512 MiB DDR (0x0000_0000..0x1FFF_FFFF):
-//
-//   0x0FFC_0000  +256 KiB  udmabuf-ojls-desc
-//   0x1000_0000  +128 MiB  udmabuf-ojls-tx
-//   0x1800_0000  +128 MiB  udmabuf-ojls-rx      (ends at top of DDR)
-//
-// leaving ~256 MiB below 0x0FFC_0000 for Linux. To resize: keep regions
-// adjacent, growing downward from the top, and keep `cma=` (stock 128M,
-// set by setup_bootargs.sh) small enough that carveout + CMA + a working
-// system still fit in 512 MiB.
-//
-// Two things about the stock PYNQ image shaped the UIO nodes:
-//
-//  * PYNQ declares its PL `generic-uio` nodes at the device-tree *root*,
-//    not under /amba, and root placement is what its kernel reliably
-//    instantiates as platform devices — so our nodes go at the root too.
-//
-//  * PYNQ pre-declares a whole-PL UIO node, `fabric@40000000` (0x4000_0000,
-//    64K), which overlaps our register bank. It is harmless: UIO maps
-//    memory with ioremap but does not request_mem_region, so two UIO
-//    devices can cover the same window without conflict, and the server
-//    selects its device by name ("openjls"/"dma"), ignoring `fabric`.
-//    (Because it maps without reserving, `fabric` is also invisible to
-//    `grep /proc/iomem` — check /sys/bus/platform/drivers/uio_pdrv_genirq/
-//    to see what actually owns an address.) If you want it gone, unbind it
-//    at runtime: echo 40000000.fabric > \
-//        /sys/bus/platform/drivers/uio_pdrv_genirq/unbind
-//
-// Needs `uio_pdrv_genirq.of_id=generic-uio` on the kernel command line and
-// the u-dma-buf module loaded (see ../../Software/README.md).
-//
-// Compile:  dtc -@ -O dtb -o openjls.dtbo openjls.dtso
+// Compile: dtc -@ -O dtb -o openjls.dtbo openjls.dtso
 
 /dts-v1/;
 /plugin/;
@@ -78,10 +29,7 @@
                 #size-cells = <1>;
                 ranges;
 
-                /* Exclusive DMA carveouts (see header). `no-map` is
-                 * mandatory: ARM rejects non-reusable shared-dma-pool
-                 * regions without it, and it is what keeps the kernel
-                 * from ever placing pages here. */
+                /* ARM rejects a non-reusable shared-dma-pool without no-map. */
                 ojls_desc_pool: ojls-desc@ffc0000 {
                     compatible = "shared-dma-pool";
                     reg = <0x0FFC0000 0x00040000>;
@@ -109,22 +57,9 @@
             dma@40400000 {
                 compatible = "generic-uio";
                 reg = <0x40400000 0x10000>;
-                /* DMA IRQs are not wired to the PS in this design; the
-                 * server polls. If you add them, uncomment and set the SPI
-                 * numbers from the IRQ_F2P mapping (first fabric IRQ = 61,
-                 * DT value = 61 - 32 = 29):
-                 * interrupt-parent = <&intc>;
-                 * interrupts = <0 29 4>;
-                 */
+                /* No IRQs: the server polls. */
             };
 
-            /* DMA buffers. With scatter-gather enabled the AXI DMA chains
-             * descriptors, so a transfer is not capped at 64 MiB — the
-             * image size is bounded only by these buffers, each bound to
-             * its exclusive carveout above via memory-region. Buffer size
-             * must equal its pool size (and stay a power of two — header).
-             *
-             * Pixels in: 128 MiB (max input image raw size). */
             udmabuf-ojls-tx {
                 compatible = "ikwzm,u-dma-buf";
                 device-name = "udmabuf-ojls-tx";
@@ -132,10 +67,8 @@
                 memory-region = <&ojls_tx_pool>;
             };
 
-            /* Bitstream out: 128 MiB. The server sizes its input guard
-             * from this at runtime (worst case raw + 25% + slack), so the
-             * effective max input is ~102 MiB — the corpus tops out well
-             * below that. Grow this (power of two!) for bigger images. */
+            /* Bounds the input too: the server reserves worst-case
+             * output headroom, so the largest image is ~102 MiB. */
             udmabuf-ojls-rx {
                 compatible = "ikwzm,u-dma-buf";
                 device-name = "udmabuf-ojls-rx";
@@ -143,9 +76,6 @@
                 memory-region = <&ojls_rx_pool>;
             };
 
-            /* SG descriptor rings: 256 KiB is far more than the handful of
-             * 64-byte descriptors the two channels ever need (one per 32 MiB
-             * chunk of the tx/rx buffers). */
             udmabuf-ojls-desc {
                 compatible = "ikwzm,u-dma-buf";
                 device-name = "udmabuf-ojls-desc";
