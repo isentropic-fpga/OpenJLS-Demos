@@ -8,11 +8,12 @@ the block design, or if you target other hardware.
 
 PS7 GEM handles Ethernet; `openjls_axis_regs` (the OpenJLS encoder wrapped with
 an AXI-Lite register bank, max 65535×65535) and an AXI DMA sit in the
-PL on a **70 MHz** fabric clock.
+PL on a **71.43 MHz** fabric clock.
 
-**Why 70 MHz.** It is the 1050 MHz DDR PLL divided by 15. The IO PLL can only
-give 1000/N (71.43, 76.9 MHz, ...), and 76.9 MHz does not close timing on this
-`-1` speed grade. The limit is the
+**FCLK0 is not set by the bitstream.** `BOOT.BIN` leaves it at 100 MHz; `board_setup.sh` and `board_reload.sh` write `FPGA0_CLK_CTRL`, and the sweep checks it in preflight and after each depth. Leave the SLCR unlocked: Linux writes it during PL loads and on reboot.
+
+**Why 71.43 MHz.** It is the 1000 MHz IO PLL divided by 14. The next step, 76.9 MHz,
+does not close timing on this `-1` speed grade. The limit is the
 encoder's context-RAM control path — a core-logic limit, not a fit or
 congestion one; the part is only ~25% full. `build.tcl` refuses to stage a bitstream whose
 post-route WNS is negative, so this limit can't be shipped by accident; if you
@@ -47,8 +48,13 @@ for the full list of requirements the design satisfies.
 
 ## Files
 
+* `rtl/axis_ready_gate.vhd` — between the encoder and S2MM: gives the encoder
+  ready on a pseudo-random share of cycles so the HIL can back its output up.
+  Full rate after reset and for every single-image encode. A module reference,
+  so `build.tcl` adds it before the block design.
 * `openjls.dtso` — device tree overlay: `generic-uio` nodes for
-  `openjls_axis_regs` (0x4000_0000) and the AXI DMA (0x4040_0000), plus three
+  `openjls_axis_regs` (0x4000_0000), `axis_ready_gate` (0x4001_0000) and the AXI
+  DMA (0x4040_0000), plus three
   `u-dma-buf` buffers (`udmabuf-ojls-tx` pixels in, `udmabuf-ojls-rx` bitstream
   out, `udmabuf-ojls-desc` the SG descriptor rings).
 * `design_encode_ethernet.tcl` — the block design (`write_bd_tcl` export, pinned
@@ -111,7 +117,7 @@ for the full list of requirements the design satisfies.
    ```sh
    BOARD=xilinx@192.168.2.99
    scp bitstreams/encode_eth_openjls_b8.bit.bin "$BOARD:~/bitstreams/"
-   scp openjls.dtbo u-dma-buf.ko "$BOARD:~/"
+   scp openjls.dtbo ready_gate_rt.dtbo u-dma-buf.ko "$BOARD:~/"
    scp -r ../../Software "$BOARD:~/"
    ```
 
@@ -311,7 +317,7 @@ Zynq-MPSoC board, give it a sibling directory under `Hardware/` and adapt:
   `tul.com.tw:pynq-z2` board part; `design_encode_ethernet.tcl` bakes the PS7
   configuration (DDR, GEM, clocks) from that preset. Regenerate the PS block for
   your board's preset rather than hand-editing PCW values.
-* **Fabric clock** — 70 MHz is this `-1` part's ceiling for the encoder's
+* **Fabric clock** — 71.43 MHz is this `-1` part's ceiling for the encoder's
   context-RAM control path. A faster speed grade may close higher; a slower one may need less.
   `build.tcl` gates on WNS, so raising
   `PCW_*FPGA0_PERIPHERAL_FREQMHZ` and rebuilding will *tell you* if it doesn't
