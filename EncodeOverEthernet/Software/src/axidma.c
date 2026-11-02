@@ -78,7 +78,7 @@ int axidma_reset(struct axidma *d)
 
 int axidma_ring_build(struct axidma_ring *ring, const struct udmabuf *db,
                       size_t desc_off, size_t desc_cap,
-                      uint64_t buf_phys, uint64_t len, int frame)
+                      uint64_t buf_phys, uint64_t len, uint32_t chunk, int frame)
 {
     uint64_t nchunks, remaining, addr;
 
@@ -89,7 +89,7 @@ int axidma_ring_build(struct axidma_ring *ring, const struct udmabuf *db,
         return -1;
     }
 
-    nchunks = (len + AXIDMA_DESC_CHUNK - 1) / AXIDMA_DESC_CHUNK;
+    nchunks = (len + chunk - 1) / chunk;
     if (nchunks * sizeof(struct axidma_desc) > desc_cap) {
         fprintf(stderr, "axidma: descriptor region too small for %" PRIu64 " descriptors\n", nchunks);
         return -1;
@@ -105,14 +105,13 @@ int axidma_ring_build(struct axidma_ring *ring, const struct udmabuf *db,
     addr      = buf_phys;
     for (int i = 0; i < ring->count; i++) {
         struct axidma_desc *dsc  = &ring->desc[i];
-        const uint32_t      chunk = (remaining > AXIDMA_DESC_CHUNK)
-                                        ? AXIDMA_DESC_CHUNK : (uint32_t)remaining;
+        const uint32_t      this_len = (remaining > chunk) ? chunk : (uint32_t)remaining;
         /* Non-cyclic: the engine stops at TAILDESC regardless, so the last
          * next-pointer wrapping back to desc[0] is harmless. */
         const uint64_t next = (i == ring->count - 1)
                                   ? ring->phys
                                   : ring->phys + (uint64_t)(i + 1) * sizeof(struct axidma_desc);
-        uint32_t ctrl = chunk & AXIDMA_DESC_LEN_MASK;
+        uint32_t ctrl = this_len & AXIDMA_DESC_LEN_MASK;
 
         memset(dsc, 0, sizeof(*dsc));
         dsc->nxtdesc     = (uint32_t)next;
@@ -127,8 +126,8 @@ int axidma_ring_build(struct axidma_ring *ring, const struct udmabuf *db,
         }
         dsc->control = ctrl;
 
-        addr      += chunk;
-        remaining -= chunk;
+        addr      += this_len;
+        remaining -= this_len;
     }
 
     return 0;
@@ -208,6 +207,48 @@ int axidma_wait(struct axidma *d, uint32_t chan, struct axidma_ring *ring, int t
             if ((last & AXIDMA_DESC_CMPLT) != 0)
                 return 0;
         }
+
+        if (now_ms() > deadline)
+            return -2;
+
+        if (d->uio.irq_ok)
+            uio_irq_wait(&d->uio, 10);
+        else
+            msleep_short();
+    }
+}
+
+int axidma_wait_packets(struct axidma *d, struct axidma_ring *ring, int timeout_ms)
+{
+    const int64_t deadline = now_ms() + timeout_ms;
+    const size_t  nbytes   = (size_t)ring->count * sizeof(struct axidma_desc);
+
+    for (;;) {
+        const uint32_t sr = uio_rd(&d->uio, AXIDMA_SR(AXIDMA_S2MM));
+
+        if ((sr & AXIDMA_SR_ANY_ERR) != 0) {
+            fprintf(stderr, "axidma: %s error on S2MM: SR=0x%08x\n", d->uio.name, sr);
+            return -1;
+        }
+
+        if (udmabuf_sync_for_cpu(ring->db, ring->off, nbytes) != 0)
+            return -1;
+
+        for (int i = 0; i < ring->count; i++) {
+            const uint32_t st = ring->desc[i].status;
+
+            if ((st & AXIDMA_DESC_ERR_MASK) != 0) {
+                fprintf(stderr, "axidma: S2MM descriptor %d error: status=0x%08x\n", i, st);
+                return -1;
+            }
+            if ((st & AXIDMA_DESC_CMPLT) != 0 && (st & AXIDMA_DESC_EOF) == 0) {
+                fprintf(stderr, "axidma: S2MM packet %d outgrew its descriptor\n", i);
+                return -1;
+            }
+        }
+
+        if ((ring->desc[ring->count - 1].status & AXIDMA_DESC_CMPLT) != 0)
+            return 0;
 
         if (now_ms() > deadline)
             return -2;

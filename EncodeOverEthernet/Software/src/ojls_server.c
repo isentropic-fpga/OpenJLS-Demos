@@ -30,6 +30,8 @@
 #include "udmabuf.h"
 #include "uio.h"
 
+#define READY_GATE_THRESH 0x00u /* axis_ready_gate: ready when a 16-bit draw is below this */
+
 struct dmabuf_region {
     struct udmabuf *b;
     size_t          off;
@@ -41,6 +43,7 @@ static uint64_t region_phys(const struct dmabuf_region *r)  { return r->b->phys 
 
 struct hw {
     struct uio           regs;
+    struct uio           gate;
     struct axidma        dma;
     struct udmabuf       tx_buf;    /* pixels in                              */
     struct udmabuf       rx_buf;    /* bitstream out                          */
@@ -56,6 +59,7 @@ struct options {
     int         port;
     const char *regs_name;
     const char *dma_name;
+    const char *gate_name;
     const char *tx_buf;   /* NULL = default name */
     const char *rx_buf;   /* NULL = default name */
     const char *desc_buf; /* NULL = default name */
@@ -178,6 +182,12 @@ static int hw_open(struct hw *hw, const struct options *opt)
            hw->regs.name, hw->bitness, OJLS_CAPS_OUT_BYTES(caps),
            hw->max_width, hw->max_height);
 
+    if (uio_open(&hw->gate, opt->gate_name) != 0) {
+        fprintf(stderr, "openjls: no UIO device \"%s\": is this board's openjls.dtbo current?\n",
+                opt->gate_name);
+        return -1;
+    }
+
     if (axidma_open(&hw->dma, opt->dma_name) != 0)
         return -1;
 
@@ -212,6 +222,7 @@ static void hw_close(struct hw *hw)
     udmabuf_close(&hw->rx_buf);
     udmabuf_close(&hw->tx_buf);
     axidma_close(&hw->dma);
+    uio_close(&hw->gate);
     uio_close(&hw->regs);
 }
 
@@ -239,6 +250,16 @@ static int hw_configure(struct hw *hw, uint16_t width, uint16_t height)
     return 0;
 }
 
+/* Also drops any beat the gate holds, which the core reset cannot reach, so call
+ * it after hw_configure and before starting the DMA. */
+static int gate_set(struct hw *hw, uint32_t ready_pct)
+{
+    const uint32_t thresh = ready_pct * 65536u / 100u;
+
+    uio_wr(&hw->gate, READY_GATE_THRESH, thresh);
+    return (uio_rd(&hw->gate, READY_GATE_THRESH) == thresh) ? 0 : -1;
+}
+
 /* After a DMA error or timeout: reset the DMA engine, then pulse the core
  * reset so any half-encoded image is dropped. */
 static void hw_recover(struct hw *hw, uint16_t width, uint16_t height)
@@ -261,7 +282,7 @@ static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, i
     int64_t         t0, t1;
     int             rc;
 
-    if (hw_configure(hw, req->width, req->height) != 0)
+    if (hw_configure(hw, req->width, req->height) != 0 || gate_set(hw, 100) != 0)
         return OJLS_ST_HW_ERROR;
 
     if (udmabuf_sync_for_device(hw->tx.b, hw->tx.off, in_bytes) != 0)
@@ -273,9 +294,9 @@ static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, i
         return OJLS_ST_HW_ERROR;
 
     if (axidma_ring_build(&s2mm, &hw->desc_buf, 0, desc_half,
-                          region_phys(&hw->rx), hw->rx.size, 0) != 0 ||
+                          region_phys(&hw->rx), hw->rx.size, AXIDMA_DESC_CHUNK, 0) != 0 ||
         axidma_ring_build(&mm2s, &hw->desc_buf, desc_half, hw->desc_buf.size - desc_half,
-                          region_phys(&hw->tx), in_bytes, 1) != 0)
+                          region_phys(&hw->tx), in_bytes, AXIDMA_DESC_CHUNK, 1) != 0)
         return OJLS_ST_HW_ERROR;
 
     if (udmabuf_sync_for_device(&hw->desc_buf, 0, hw->desc_buf.size) != 0)
@@ -311,6 +332,7 @@ static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, i
     resp.width       = req->width;
     resp.height      = req->height;
     resp.bitness     = req->bitness;
+    resp.ready_pct   = 0;
     resp.payload_len = out_bytes;
     ojls_hdr_pack(hdr_buf, &resp);
 
@@ -326,10 +348,144 @@ static int encode_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, i
     return 0;
 }
 
+/* Headroom for incompressible input, page-aligned: S2MM has no DRE, so each
+ * image must start on a beat boundary. */
+static size_t stream_slot_bytes(uint32_t image_bytes)
+{
+    const uint64_t worst = (uint64_t)image_bytes + image_bytes / 4 + 4096;
+
+    return (size_t)((worst + 4095) & ~(uint64_t)4095);
+}
+
+/* Lengths, then each image from its own buffer at stride `slot`. */
+static int stream_send(int fd, const struct ojls_hdr *req, uint8_t status,
+                       const uint8_t *base, size_t slot, const uint32_t *lens, uint32_t count)
+{
+    struct ojls_hdr resp = *req;
+    uint8_t         hdr_buf[OJLS_PROTO_HDR_LEN];
+    uint8_t         len_buf[4];
+    uint32_t        total = count * 4;
+
+    for (uint32_t i = 0; i < count; i++)
+        total += lens[i];
+
+    resp.type        = OJLS_MSG_STREAM_RESP;
+    resp.status      = status;
+    resp.payload_len = total;
+    ojls_hdr_pack(hdr_buf, &resp);
+    if (send_full(fd, hdr_buf, sizeof(hdr_buf)) != 0)
+        return -1;
+
+    for (uint32_t i = 0; i < count; i++) {
+        ojls_put_u32(len_buf, lens[i]);
+        if (send_full(fd, len_buf, sizeof(len_buf)) != 0)
+            return -1;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        if (send_full(fd, base + i * slot, lens[i]) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+/* One reset for the whole stream, then every image through the core back to
+ * back. MM2S is one frame (the core counts W x H and ignores TLAST); S2MM has
+ * one descriptor per image, closed by that image's TLAST. Returns as
+ * encode_and_reply does. */
+static int stream_and_reply(int fd, struct hw *hw, const struct ojls_hdr *req, uint32_t count,
+                            int timeout_ms)
+{
+    const uint32_t image_bytes = req->payload_len / count;
+    const size_t   slot        = stream_slot_bytes(image_bytes);
+    const size_t   desc_half   = hw->desc_buf.size / 2;
+    struct axidma_ring mm2s, s2mm;
+    uint32_t      *lens;
+    uint32_t       closed = 0;
+    uint64_t       out_bytes = 0;
+    uint8_t        status = OJLS_ST_OK;
+    int64_t        t0, t1;
+    int            rc;
+
+    if (hw_configure(hw, req->width, req->height) != 0 ||
+        gate_set(hw, (req->ready_pct != 0) ? req->ready_pct : 100) != 0 ||
+        udmabuf_sync_for_device(hw->tx.b, hw->tx.off, req->payload_len) != 0 ||
+        axidma_reset(&hw->dma) != 0)
+        return OJLS_ST_HW_ERROR;
+
+    if (axidma_ring_build(&s2mm, &hw->desc_buf, 0, desc_half,
+                          region_phys(&hw->rx), (uint64_t)slot * count, (uint32_t)slot, 0) != 0 ||
+        axidma_ring_build(&mm2s, &hw->desc_buf, desc_half, hw->desc_buf.size - desc_half,
+                          region_phys(&hw->tx), req->payload_len, AXIDMA_DESC_CHUNK, 1) != 0 ||
+        udmabuf_sync_for_device(&hw->desc_buf, 0, hw->desc_buf.size) != 0)
+        return OJLS_ST_HW_ERROR;
+
+    lens = calloc(count, sizeof(*lens));
+    if (lens == NULL)
+        return OJLS_ST_HW_ERROR;
+
+    t0 = now_us();
+
+    if (axidma_sg_start(&hw->dma, AXIDMA_S2MM, &s2mm) != 0 ||
+        axidma_sg_start(&hw->dma, AXIDMA_MM2S, &mm2s) != 0) {
+        free(lens);
+        return OJLS_ST_HW_ERROR;
+    }
+
+    rc = axidma_wait_packets(&hw->dma, &s2mm, timeout_ms);
+    t1 = now_us();
+    if (rc != 0) {
+        status = (rc == -2) ? OJLS_ST_HW_TIMEOUT : OJLS_ST_HW_ERROR;
+        hw_recover(hw, req->width, req->height);
+    }
+
+    if (udmabuf_sync_for_cpu(&hw->desc_buf, 0, (size_t)count * sizeof(struct axidma_desc)) != 0 ||
+        udmabuf_sync_for_cpu(hw->rx.b, hw->rx.off, slot * count) != 0) {
+        free(lens);
+        return OJLS_ST_HW_ERROR;
+    }
+
+    for (; closed < count; closed++) {
+        const uint32_t st = s2mm.desc[closed].status;
+
+        if ((st & AXIDMA_DESC_EOF) == 0)
+            break;
+        lens[closed] = st & AXIDMA_DESC_LEN_MASK;
+        out_bytes += lens[closed];
+    }
+
+    rc = stream_send(fd, req, status, region_mem(&hw->rx), slot, lens, count);
+    free(lens);
+    if (rc != 0)
+        return -1;
+
+    printf("stream %ux%u @ %u bpp, ready %u%%: %u/%u images, %u -> %" PRIu64 " bytes in %.2f ms, %.1f MB/s%s\n",
+           req->width, req->height, req->bitness, (req->ready_pct != 0) ? req->ready_pct : 100,
+           closed, count, req->payload_len, out_bytes,
+           (t1 - t0) / 1e3, (t1 > t0) ? req->payload_len / (double)(t1 - t0) : 0.0,
+           (status != OJLS_ST_OK) ? " FAILED" : "");
+    return 0;
+}
+
 static int loopback_reply(int fd, const struct ojls_hdr *req, const uint8_t *payload)
 {
     struct ojls_hdr resp = *req;
     uint8_t         hdr_buf[OJLS_PROTO_HDR_LEN];
+
+    if (req->type == OJLS_MSG_STREAM_REQ) {
+        const uint32_t size  = (uint32_t)req->width * req->height * ojls_bytes_per_pixel(req->bitness);
+        const uint32_t count = req->payload_len / size;
+        uint32_t      *lens  = malloc(count * sizeof(*lens));
+        int            rc;
+
+        if (lens == NULL)
+            return -1;
+        for (uint32_t i = 0; i < count; i++)
+            lens[i] = size;
+        rc = stream_send(fd, req, OJLS_ST_OK, payload, size, lens, count);
+        free(lens);
+        printf("loopback: echoed a stream of %u images\n", count);
+        return rc;
+    }
 
     resp.type   = OJLS_MSG_ENCODE_RESP;
     resp.status = OJLS_ST_OK;
@@ -355,6 +511,8 @@ static int serve_connection(int fd, struct hw *hw, const struct options *opt)
         uint8_t         hdr_raw[OJLS_PROTO_HDR_LEN];
         struct ojls_hdr req;
         uint32_t        expect;
+        uint32_t        count = 1;
+        int             stream;
         int             st;
 
         rc = recv_full(fd, hdr_raw, sizeof(hdr_raw));
@@ -374,17 +532,24 @@ static int serve_connection(int fd, struct hw *hw, const struct options *opt)
         }
         if (req.version != OJLS_PROTO_VERSION)
             st = OJLS_ST_BAD_VERSION;
-        else if (req.type != OJLS_MSG_ENCODE_REQ)
+        else if (req.type != OJLS_MSG_ENCODE_REQ && req.type != OJLS_MSG_STREAM_REQ)
             st = OJLS_ST_BAD_TYPE;
         else
             st = OJLS_ST_OK;
+
+        stream = (req.type == OJLS_MSG_STREAM_REQ);
+        if (st == OJLS_ST_OK && stream && req.ready_pct > 100)
+            st = OJLS_ST_BAD_READY;
 
         if (st == OJLS_ST_OK) {
             expect = (uint32_t)req.width * req.height * ojls_bytes_per_pixel(req.bitness);
             if (req.bitness < 8 || req.bitness > 16)
                 st = OJLS_ST_BAD_BITNESS;
-            else if (req.payload_len != expect)
+            else if (stream ? (expect == 0 || req.payload_len == 0 || req.payload_len % expect != 0)
+                            : (req.payload_len != expect))
                 st = OJLS_ST_SIZE_MISMATCH;
+            else if (stream)
+                count = req.payload_len / expect;
         }
 
         if (st == OJLS_ST_OK && !opt->loopback) {
@@ -397,6 +562,10 @@ static int serve_connection(int fd, struct hw *hw, const struct options *opt)
                      /* Headroom for incompressible input; an overrun is still
                       * caught as a missing TLAST, not corrupted. */
                      (uint64_t)req.payload_len + req.payload_len / 4 + 4096 > hw->rx.size)
+                st = OJLS_ST_TOO_LARGE;
+            else if (stream &&
+                     ((uint64_t)count * stream_slot_bytes(req.payload_len / count) > hw->rx.size ||
+                      (uint64_t)count * sizeof(struct axidma_desc) > hw->desc_buf.size / 2))
                 st = OJLS_ST_TOO_LARGE;
         }
 
@@ -431,7 +600,8 @@ static int serve_connection(int fd, struct hw *hw, const struct options *opt)
             break;
         }
 
-        st = encode_and_reply(fd, hw, &req, opt->timeout_ms);
+        st = stream ? stream_and_reply(fd, hw, &req, count, opt->timeout_ms)
+                    : encode_and_reply(fd, hw, &req, opt->timeout_ms);
         if (st < 0) {
             rc = -1;
             break;
@@ -453,6 +623,7 @@ static void usage(const char *argv0)
             "  -p PORT        TCP port (default %d)\n"
             "  --regs NAME    UIO device of the openjls_axis_regs register bank (default \"openjls\")\n"
             "  --dma NAME     UIO device of the AXI DMA (default \"dma\")\n"
+            "  --gate NAME    UIO device of axis_ready_gate (default \"ready_gate\")\n"
             "  --tx-buf NAME  u-dma-buf for pixels in (default \"udmabuf-ojls-tx\")\n"
             "  --rx-buf NAME  u-dma-buf for bitstream out (default \"udmabuf-ojls-rx\")\n"
             "  --desc-buf NAME u-dma-buf for SG descriptor rings (default \"udmabuf-ojls-desc\")\n"
@@ -467,6 +638,7 @@ int main(int argc, char **argv)
         .port       = OJLS_PROTO_PORT,
         .regs_name  = "openjls",
         .dma_name   = "dma",
+        .gate_name  = "ready_gate",
         .timeout_ms = 10000,
     };
     struct hw          hw;
@@ -482,6 +654,8 @@ int main(int argc, char **argv)
             opt.regs_name = argv[++i];
         else if (strcmp(argv[i], "--dma") == 0 && i + 1 < argc)
             opt.dma_name = argv[++i];
+        else if (strcmp(argv[i], "--gate") == 0 && i + 1 < argc)
+            opt.gate_name = argv[++i];
         else if (strcmp(argv[i], "--tx-buf") == 0 && i + 1 < argc)
             opt.tx_buf = argv[++i];
         else if (strcmp(argv[i], "--rx-buf") == 0 && i + 1 < argc)

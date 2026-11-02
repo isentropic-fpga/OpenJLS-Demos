@@ -99,13 +99,13 @@ int axidma_reset(struct axidma *d);
 
 /* Build a descriptor ring in the u-dma-buf region [db + desc_off, +desc_cap)
  * that maps the contiguous data buffer [buf_phys, buf_phys + len) in chunks of
- * at most AXIDMA_DESC_CHUNK. `frame` != 0 sets SOF on the first descriptor and
+ * at most `chunk` bytes. `frame` != 0 sets SOF on the first descriptor and
  * EOF on the last (use it for MM2S so the encoder sees one TLAST-framed
  * packet; leave 0 for S2MM). Returns 0, or -1 if the region cannot hold the
  * required descriptors. Descriptors are written but not yet synced. */
 int axidma_ring_build(struct axidma_ring *ring, const struct udmabuf *db,
                       size_t desc_off, size_t desc_cap,
-                      uint64_t buf_phys, uint64_t len, int frame);
+                      uint64_t buf_phys, uint64_t len, uint32_t chunk, int frame);
 
 /* Start `chan` processing `ring` (reset assumed done): program CURDESC, raise
  * RS, then write TAILDESC to kick. Returns 0 or -1. */
@@ -118,6 +118,11 @@ int axidma_sg_start(struct axidma *d, uint32_t chan, const struct axidma_ring *r
  * (decoded to stderr), -2 on timeout. On return 0 the ring is CPU-coherent so
  * axidma_ring_bytes() can be read straight away. */
 int axidma_wait(struct axidma *d, uint32_t chan, struct axidma_ring *ring, int timeout_ms);
+
+/* Wait for every descriptor of the S2MM `ring` to close on its own TLAST, one
+ * packet per descriptor. Returns 0, -1 on DMA error or a packet outgrowing its
+ * descriptor, -2 on timeout. */
+int axidma_wait_packets(struct axidma *d, struct axidma_ring *ring, int timeout_ms);
 
 /* Total bytes the DMA moved for `ring`: the sum of per-descriptor counts up to
  * and including the EOF descriptor. Valid after axidma_wait() returns 0. */
