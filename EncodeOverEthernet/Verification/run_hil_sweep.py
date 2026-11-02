@@ -9,7 +9,9 @@
 
 Per depth N (8..16, from each PGM's maxval, as the client derives it): reload
 encode_eth_openjls_b<N>.bit.bin with board_reload.sh, encode every depth-N
-image on the board, cmp each against its CharLS golden.
+image on the board, cmp each against its CharLS golden. Then send each same-size
+set of that depth as one stream, with no core reset between its images, and cmp
+each image the same way.
 
 Environment (defaults suit the in-tree layout):
   BOARD            ssh target (default xilinx@192.168.2.99; key auth only;
@@ -23,6 +25,8 @@ Environment (defaults suit the in-tree layout):
   BITSTREAM_DIR, IMAGES_DIR, CHARLS, CLIENT, OUT_DIR
   FULL_IMAGES_DIR  full-size originals (default Images_full beside IMAGES_DIR;
                    empty = skip)
+  STREAM_IMAGES_DIR  no-reset sets, <depth>-r<ready>/ (default Images_stream
+                   beside IMAGES_DIR; empty = skip)
   PORT             server port (default 19020)
   TX_BYTES         board tx buffer; larger images are skipped (default 128M)
   HW_MAX_W/H       max image size; larger are skipped (default 65535)
@@ -31,17 +35,21 @@ Usage:
   ./run_hil_sweep.py                 # full sweep
   ./run_hil_sweep.py --dry-run       # preflight + depth histogram
   ./run_hil_sweep.py --bitness 8 12  # only these depths
-  ./run_hil_sweep.py --limit 5       # at most 5 images per depth
+  ./run_hil_sweep.py --limit 5       # at most 5 images per depth and per stream
+  ./run_hil_sweep.py --stream-only   # only the no-reset streams
+  ./run_hil_sweep.py --no-stream     # only the per-image encodes
 """
 import argparse
 import csv
 import filecmp
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEMO = os.path.dirname(HERE)
@@ -55,6 +63,7 @@ def env(name, default):
 BITSTREAM_DIR = env("BITSTREAM_DIR", os.path.join(DEMO, "Hardware", "pynq-z2", "bitstreams"))
 IMAGES_DIR = env("IMAGES_DIR", os.path.join(OJLS, "Verification", "Golden model", "Images"))
 FULL_IMAGES_DIR = env("FULL_IMAGES_DIR", os.path.join(os.path.dirname(IMAGES_DIR), "Images_full"))
+STREAM_IMAGES_DIR = env("STREAM_IMAGES_DIR", os.path.join(os.path.dirname(IMAGES_DIR), "Images_stream"))
 CHARLS = env("CHARLS", os.path.join(OJLS, "ThirdParty", "charls", "build", "cli", "charls-cli"))
 CLIENT = env("CLIENT", os.path.join(DEMO, "Software", "ojls_client"))
 OUT_DIR = env("OUT_DIR", os.path.join(HERE, "out"))
@@ -152,12 +161,30 @@ for n in 'ojls-tx@10000000' 'ojls-rx@18000000' 'ojls-desc@ffc0000'; do
   if [ -d "/proc/device-tree/reserved-memory/$n" ]; then echo "rmem:$n:ok"
   else echo "rmem:$n:missing"; fi
 done
-for n in 'openjls@40000000' 'dma@40400000'; do
+for n in 'openjls@40000000' 'ready_gate@40010000' 'dma@40400000'; do
   if [ -d "/proc/device-tree/$n" ]; then echo "dt:$n:ok"; else echo "dt:$n:missing"; fi
 done
 if [ -x @SERVER@/ojls_server ]; then echo "server:bin:ok"; else echo "server:bin:missing"; fi
 if [ -d /sys/class/fpga_manager/fpga0 ]; then echo "fpga:mgr:ok"; else echo "fpga:mgr:missing"; fi
 """
+
+
+FCLK_CTRL = "00100e00"  # IO PLL / 14 = 71.43 MHz
+FCLK_READ_PY = ("import mmap,os,struct;"
+                "m=mmap.mmap(os.open('/dev/mem',os.O_RDONLY|os.O_SYNC),4096,prot=mmap.PROT_READ,"
+                "offset=0xF8000000);print('%08x'%struct.unpack('<I',m[0x170:0x174])[0])")
+
+
+def read_fclk(args):
+    """FPGA0_CLK_CTRL as hex, or "" if the board cannot be read."""
+    sudo = f"echo {shlex.quote(args.sudo_pass)} | sudo -S" if args.sudo_pass else "sudo"
+    try:
+        r = subprocess.run(ssh_prefix(args.board, args.ssh_key, args.ssh_opts)
+                           + [f"{sudo} python3 -c {shlex.quote(FCLK_READ_PY)}"],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
+    except subprocess.TimeoutExpired:
+        return ""
+    return r.stdout.decode(errors="replace").strip()
 
 
 def _mib(n):
@@ -232,6 +259,13 @@ def board_probe(args):
             notes.append(f"  warn: board tx buffer is {_mib(tx)} but TX_BYTES is "
                          f"{_mib(TX_BYTES)}; images between the two will be sent and\n"
                          f"        fail rather than be skipped — set TX_BYTES={tx}")
+
+    ctrl = read_fclk(args)
+    if ctrl != FCLK_CTRL:
+        problems.append(
+            f"FPGA0_CLK_CTRL is {ctrl or 'unreadable'}, expected {FCLK_CTRL} (71.43 MHz)\n"
+            "    FCLK0 resets to the boot image's rate on every boot. On the board, as root:\n"
+            "    sudo env HOME=$HOME ./board_setup.sh 8")
 
     if got.get(("server", "bin")) != "ok":
         problems.append(
@@ -313,8 +347,26 @@ def enumerate_corpus():
     return buckets, sub8
 
 
+def stream_sets():
+    """Map bitness -> [(set name, ready %, PGMs in stream order)], highest ready first."""
+    sets = {}
+    if not (STREAM_IMAGES_DIR and os.path.isdir(STREAM_IMAGES_DIR)):
+        return sets
+    for name in os.listdir(STREAM_IMAGES_DIR):
+        d = os.path.join(STREAM_IMAGES_DIR, name)
+        depth, sep, ready = name.partition("-r")
+        if sep and depth.isdigit() and ready.isdigit() and os.path.isdir(d):
+            pgms = sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".pgm"))
+            sets.setdefault(int(depth), []).append((name, int(ready), pgms))
+    return {n: sorted(v, key=lambda t: -t[1]) for n, v in sets.items()}
+
+
 def preflight(args):
     problems = []
+    if STREAM_IMAGES_DIR and not args.no_stream and not stream_sets():
+        problems.append(
+            f"no stream sets in {STREAM_IMAGES_DIR}\n"
+            f"    prepare them: '{OJLS}/Verification/Golden model/prepare_images.sh', or --no-stream")
     has_pgm = os.path.isdir(IMAGES_DIR) and any(
         n.lower().endswith(".pgm") for n in os.listdir(IMAGES_DIR))
     if not has_pgm:
@@ -403,8 +455,47 @@ def encode_one(args, path):
     return out_jls, golden
 
 
-def write_report(results):
-    path = os.path.join(OUT_DIR, "report.md")
+def run_stream(args, n, set_name, ready, pgms):
+    """Encode one set as a single stream; returns its result rows."""
+    enc_dir = os.path.join(OUT_DIR, "encoded", "stream", set_name)
+    gold_dir = os.path.join(OUT_DIR, "golden", "stream", set_name)
+    shutil.rmtree(enc_dir, ignore_errors=True)
+    os.makedirs(enc_dir)
+
+    def golden(path):
+        g = os.path.join(gold_dir, os.path.splitext(os.path.basename(path))[0] + ".jls")
+        if not os.path.exists(g) or os.path.getmtime(g) < os.path.getmtime(path):
+            charls_encode(path, g)
+        return g
+
+    with ThreadPoolExecutor(20) as pool:
+        goldens = list(pool.map(golden, pgms))
+
+    r = subprocess.run([CLIENT, "-p", str(PORT), "-r", str(ready), "-s", enc_dir, args.board_ip] + pgms,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+    why = ""
+    if r.returncode != 0:
+        why = " | ".join(r.stdout.decode(errors="replace").strip().splitlines()) or "client failed"
+        print(f"  {set_name}: {why}")
+
+    rows = []
+    for path, gold in zip(pgms, goldens):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        name = f"stream{set_name}-{stem}"
+        out = os.path.join(enc_dir, stem + ".jls")
+        w, h, mx = pgm_geom(path)
+        in_b = w * h * bucket_of(mx)[1]
+        if not os.path.exists(out):
+            rows.append((n, name, f"error:{why or 'no output'}", in_b, 0))
+        elif filecmp.cmp(out, gold, shallow=False):
+            rows.append((n, name, "pass", in_b, os.path.getsize(out)))
+        else:
+            print(f"  MISMATCH {name}: hw {os.path.getsize(out)} B != golden {os.path.getsize(gold)} B")
+            rows.append((n, name, "mismatch", in_b, os.path.getsize(out)))
+    return rows
+
+
+def report_table(f, results):
     rows = {}
     for n, _, status, in_b, jls_b in results:
         r = rows.setdefault(n, [0, 0, 0, 0, 0, 0])
@@ -414,15 +505,29 @@ def write_report(results):
         r[5] += jls_b
     rows = dict(sorted(rows.items()))
     rows["**Total**"] = [sum(c) for c in zip(*rows.values())]
+    f.write("| Depth | Images | Pass | Skip | Fail | Input (B) | JLS checked (B) | Ratio |\n"
+            "|--:|--:|--:|--:|--:|--:|--:|--:|\n")
+    for n, (imgs, ok, skip, fail, in_b, jls_b) in rows.items():
+        ratio = f"{in_b / jls_b:.2f}:1" if jls_b else "-"
+        f.write(f"| {n} | {imgs} | {ok} | {skip} | {fail} | {in_b} | {jls_b} | {ratio} |\n")
+
+
+def write_report(results):
+    path = os.path.join(OUT_DIR, "report.md")
+    single = [r for r in results if not r[1].startswith("stream")]
+    streamed = [r for r in results if r[1].startswith("stream")]
     with open(path, "w") as f:
         f.write("# Hardware-in-the-loop results\n\n"
                 "Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; "
-                "per-image results are in results.csv.\n\n"
-                "| Depth | Images | Pass | Skip | Fail | Input (B) | JLS checked (B) | Ratio |\n"
-                "|--:|--:|--:|--:|--:|--:|--:|--:|\n")
-        for n, (imgs, ok, skip, fail, in_b, jls_b) in rows.items():
-            ratio = f"{in_b / jls_b:.2f}:1" if jls_b else "-"
-            f.write(f"| {n} | {imgs} | {ok} | {skip} | {fail} | {in_b} | {jls_b} | {ratio} |\n")
+                "per-image results are in results.csv.\n\n")
+        if single:
+            f.write("## One image per reset\n\n")
+            report_table(f, single)
+        if streamed:
+            f.write(("\n" if single else "") + "## No-reset streams\n\n"
+                    "Same-size images back to back, one core reset per set. Each set's output "
+                    "is throttled in the PL to its ready level, the r<N> in its name.\n\n")
+            report_table(f, streamed)
     return path
 
 
@@ -435,7 +540,10 @@ def main():
     ap.add_argument("--bitness", nargs="+", type=int, metavar="N",
                     help="restrict to these depths (default: all available)")
     ap.add_argument("--limit", type=int, default=0,
-                    help="at most N images per bucket (0 = all)")
+                    help="at most N images per bucket and per stream (0 = all)")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--no-stream", action="store_true", help="skip the no-reset streams")
+    mode.add_argument("--stream-only", action="store_true", help="only the no-reset streams")
     ap.add_argument("--no-gate", action="store_true",
                     help="skip the CharLS T16E0.JLS trust gate")
     args = ap.parse_args()
@@ -454,8 +562,11 @@ def main():
 
     bitstreams = available_bitstreams()
     buckets, sub8 = enumerate_corpus()
+    if args.stream_only:
+        buckets = {}
+    streams = {} if args.no_stream else stream_sets()
 
-    depths = sorted(set(bitstreams) & set(buckets))
+    depths = sorted(set(bitstreams) & (set(buckets) | set(streams)))
     if args.bitness:
         depths = [d for d in depths if d in args.bitness]
 
@@ -465,14 +576,16 @@ def main():
     print("bucket histogram (precision: image count):")
     for n in range(8, 17):
         imgs = buckets.get(n, [])
-        if not imgs:
+        sets = streams.get(n, [])
+        if not imgs and not sets:
             continue
         have = "bitstream" if n in bitstreams else "NO BITSTREAM"
         run_it = "run" if n in depths else "skip"
-        print(f"  b{n:<2}: {len(imgs):4d} images   [{have}, {run_it}]")
+        in_sets = " + ".join(f"{name}: {len(p)}" for name, _, p in sets) or "no streams"
+        print(f"  b{n:<2}: {len(imgs):4d} images, {in_sets}   [{have}, {run_it}]")
     if sub8:
         print(f"  sub-8-bit (no bitstream, skipped): {len(sub8)}")
-    missing = sorted(set(buckets) - set(bitstreams))
+    missing = sorted((set(buckets) | set(streams)) - set(bitstreams))
     if missing:
         print(f"  note: precisions with images but no bitstream: {missing}")
     if not depths:
@@ -489,9 +602,10 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     results = []           # (bitness, image, status, in_bytes, jls_bytes)
     totals = {}            # bitness -> [passed, failed, skipped]
+    clock_bad = {}         # bitness -> FPGA0_CLK_CTRL read after its encodes
 
     for n in depths:
-        imgs = sorted(buckets[n], key=lambda t: t[4])   # small first
+        imgs = sorted(buckets.get(n, []), key=lambda t: t[4])   # small first
         if args.limit:
             imgs = imgs[:args.limit]
         print(f"\n===== BITNESS {n}: {len(imgs)} images =====")
@@ -527,7 +641,19 @@ def main():
                 print(f"  MISMATCH {name}: hw {jls_bytes} B != golden {os.path.getsize(golden)} B")
                 results.append((n, name, "mismatch", in_bytes, jls_bytes))
                 tally[1] += 1
+        for set_name, ready, pgms in streams.get(n, []):
+            rows = run_stream(args, n, set_name, ready, pgms[:args.limit] if args.limit else pgms)
+            results += rows
+            ok = sum(1 for r in rows if r[2] == "pass")
+            tally[0] += ok
+            tally[1] += len(rows) - ok
+            print(f"  stream {set_name}: {ok}/{len(rows)} byte-exact")
         totals[n] = tally
+        # Checked per depth, not once at the end: the next reload rewrites the clock.
+        ctrl = read_fclk(args)
+        if ctrl != FCLK_CTRL:
+            clock_bad[n] = ctrl or "unreadable"
+            print(f"  CLOCK CHANGED: FPGA0_CLK_CTRL is {clock_bad[n]}, expected {FCLK_CTRL}")
         print(f"  b{n}: {tally[0]} pass, {tally[1]} fail, {tally[2]} skip")
 
     # -- results.csv
@@ -548,7 +674,9 @@ def main():
         print(f"  b{n:<2}: {p:4d} pass  {fl:4d} fail  {sk:4d} skip   [{flag}]")
     print(f"  all: {tot_pass} pass, {tot_fail} fail, {tot_skip} skip")
     print(f"  results: {csv_path}, {report_path}")
-    sys.exit(1 if tot_fail else 0)
+    for n, ctrl in clock_bad.items():
+        print(f"  b{n}: clock was {ctrl} after its encodes, not {FCLK_CTRL}: not a valid run")
+    sys.exit(1 if tot_fail or clock_bad else 0)
 
 
 if __name__ == "__main__":
