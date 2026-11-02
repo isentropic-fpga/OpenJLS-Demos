@@ -56,4 +56,5 @@ for b in "${DEPTHS[@]}"; do
   fi
 done
 dtc -@ -O dtb -o "$HERE/openjls.dtbo" "$HERE/openjls.dtso" || { echo "  dtc FAILED"; rc=1; }
+dtc -@ -O dtb -o "$HERE/ready_gate_rt.dtbo" "$HERE/ready_gate_rt.dtso" || { echo "  dtc FAILED"; rc=1; }
 exit $rc

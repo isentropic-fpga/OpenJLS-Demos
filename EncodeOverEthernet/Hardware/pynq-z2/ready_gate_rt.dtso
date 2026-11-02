@@ -1,0 +1,29 @@
+// Copyright (C) 2026 Vitor Mendes Camilo
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// This file is part of OpenJLS-Demos. Available under GPLv3 or a
+// commercial license. See LICENSE.md and README.md for details.
+//
+// ready_gate_rt.dtso: runtime overlay adding the ready gate UIO, applied by board_setup.sh
+//
+// Needed because a board booting a patched image.ub ignores new nodes in openjls.dtbo.
+//
+// Compile: dtc -@ -O dtb -o ready_gate_rt.dtbo ready_gate_rt.dtso
+
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target-path = "/";
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <1>;
+
+            ready_gate@40010000 {
+                compatible = "generic-uio";
+                reg = <0x40010000 0x1000>;
+            };
+        };
+    };
+};
