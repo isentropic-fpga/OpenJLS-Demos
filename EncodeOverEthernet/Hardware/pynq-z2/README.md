@@ -4,7 +4,7 @@
 > these files ship prebuilt. This page covers *rebuilding* them.
 
 PS7 GEM handles Ethernet; the OpenJLS encoder (`openjls_axis_regs`) and an AXI
-DMA in Scatter/Gather mode sit in the PL on a 70 MHz fabric clock.
+DMA in Scatter/Gather mode sit in the PL on a 71.43 MHz fabric clock.
 [`INTERNALS.md`](INTERNALS.md) has the rationale, the manual bring-up and
 porting notes.
 
@@ -13,6 +13,8 @@ porting notes.
 | File | What | Rebuild when |
 |---|---|---|
 | `bitstreams/encode_eth_openjls_b<N>.bit.bin` | PL image, one per pixel depth `N` (8..16) | you change the block design or the core |
+| `ready_gate_rt.dtbo` | runtime overlay: UIO node for the ready gate, applied by `board_setup.sh` | you change its address |
+| `rtl/axis_ready_gate.vhd` | PL ready throttle for the no-reset streams | you change the gate |
 | `openjls.dtbo` | device-tree overlay: UIO nodes + the DMA reserved-memory carveout | you change addresses or buffer sizes |
 | `u-dma-buf.ko` | the [u-dma-buf](https://github.com/ikwzm/udmabuf) kernel module | your board's kernel differs from the PYNQ image's `6.6.10-xilinx-v2024.1-g3c0eca68c652` (see [`INTERNALS.md`](INTERNALS.md)) |
 
