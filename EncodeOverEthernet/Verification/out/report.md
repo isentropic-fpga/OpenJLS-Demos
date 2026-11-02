@@ -2,6 +2,8 @@
 
 Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; per-image results are in results.csv.
 
+## One image per reset
+
 | Depth | Images | Pass | Skip | Fail | Input (B) | JLS checked (B) | Ratio |
 |--:|--:|--:|--:|--:|--:|--:|--:|
 | 8 | 732 | 732 | 0 | 0 | 288909760 | 143535526 | 2.01:1 |
@@ -14,3 +16,20 @@ Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; per-image re
 | 15 | 602 | 602 | 0 | 0 | 76181926 | 39559057 | 1.93:1 |
 | 16 | 691 | 691 | 0 | 0 | 422946730 | 287151596 | 1.47:1 |
 | **Total** | 5639 | 5639 | 0 | 0 | 1243837460 | 641433964 | 1.94:1 |
+
+## No-reset streams
+
+Same-size images back to back, one core reset per set. Each set's output is throttled in the PL to its ready level, the r<N> in its name.
+
+| Depth | Images | Pass | Skip | Fail | Input (B) | JLS checked (B) | Ratio |
+|--:|--:|--:|--:|--:|--:|--:|--:|
+| 8 | 1200 | 1200 | 0 | 0 | 19660800 | 9195876 | 2.14:1 |
+| 9 | 600 | 600 | 0 | 0 | 19660800 | 5387561 | 3.65:1 |
+| 10 | 600 | 600 | 0 | 0 | 19660800 | 6259135 | 3.14:1 |
+| 11 | 600 | 600 | 0 | 0 | 19660800 | 7605529 | 2.59:1 |
+| 12 | 600 | 600 | 0 | 0 | 19660800 | 8462558 | 2.32:1 |
+| 13 | 600 | 600 | 0 | 0 | 19660800 | 9312562 | 2.11:1 |
+| 14 | 600 | 600 | 0 | 0 | 19660800 | 10905679 | 1.80:1 |
+| 15 | 600 | 600 | 0 | 0 | 19660800 | 11719599 | 1.68:1 |
+| 16 | 600 | 600 | 0 | 0 | 19660800 | 13136192 | 1.50:1 |
+| **Total** | 6000 | 6000 | 0 | 0 | 176947200 | 81984691 | 2.16:1 |
