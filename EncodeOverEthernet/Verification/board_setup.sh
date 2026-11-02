@@ -19,6 +19,7 @@ server_dir="${2:-$HOME/Software}"
 fw_dir="${3:-/lib/firmware}"
 bs_dir="${4:-$HOME/bitstreams}"
 module="${UDMABUF_KO:-$HOME/u-dma-buf.ko}"
+gate_dtbo="${GATE_DTBO:-$HOME/ready_gate_rt.dtbo}"
 
 fw="encode_eth_openjls_b${b}.bit.bin"
 src="$bs_dir/$fw"
@@ -26,6 +27,7 @@ ov=/sys/kernel/config/device-tree/overlays/openjls   # legacy runtime overlay
 
 [ -f "$src" ]                  || { echo "missing bitstream: $src" >&2; exit 1; }
 [ -f "$module" ]              || { echo "missing module: $module" >&2; exit 1; }
+[ -f "$gate_dtbo" ]           || { echo "missing overlay: $gate_dtbo" >&2; exit 1; }
 [ -x "$server_dir/ojls_server" ] || { echo "missing server: $server_dir/ojls_server" >&2; exit 1; }
 
 echo "=== 1. stop server + unload u-dma-buf (idempotent teardown) ==="
@@ -35,7 +37,21 @@ rmmod u-dma-buf 2>/dev/null || true
 # A stale configfs overlay's u-dma-buf nodes would shadow the boot-time ones.
 [ -d "$ov" ] && { echo "(removing stale runtime overlay)"; rmdir "$ov" 2>/dev/null || true; }
 
-echo "=== 2. load PL image ($fw) ==="
+echo "=== 2. set FCLK0 to 71.43 MHz, load PL image ($fw) ==="
+# FCLK0 comes from BOOT.BIN (100 MHz on this image); loading a bitstream leaves it
+# alone, so the 71.43 MHz the design closes timing at must be set here: IO PLL / 14.
+python3 - <<'PY'
+import mmap, os, struct
+m = mmap.mmap(os.open("/dev/mem", os.O_RDWR | os.O_SYNC), 4096, offset=0xF8000000)
+def wr(a, v): m[a:a + 4] = struct.pack("<I", v)
+# Never relock the SLCR: Linux leaves it unlocked and writes it during PL loads
+# and on reboot. Locked, loads soon die with an AXI timeout and reboot hangs.
+wr(0x008, 0xDF0D)      # SLCR unlock
+wr(0x170, 0x00100E00)  # FPGA0_CLK_CTRL
+ctrl = struct.unpack("<I", m[0x170:0x174])[0]
+if ctrl != 0x00100E00:
+    raise SystemExit("FPGA0_CLK_CTRL reads 0x%08x" % ctrl)
+PY
 cp -f "$src" "$fw_dir/$fw"
 echo 0 > /sys/class/fpga_manager/fpga0/flags
 echo "$fw" > /sys/class/fpga_manager/fpga0/firmware
@@ -45,10 +61,15 @@ echo "fpga state: $state"
 
 echo "=== 3. verify the boot-time overlay (UIO + DMA carveout) is live ==="
 dt=/proc/device-tree
+# Boot images with baked-in nodes never pick up the gate from openjls.dtbo.
+if [ ! -d "$dt/ready_gate@40010000" ]; then
+  g=/sys/kernel/config/device-tree/overlays/ready_gate
+  mkdir -p "$g"; cat "$gate_dtbo" > "$g/dtbo"
+fi
 missing=""
 for n in reserved-memory/ojls-tx@10000000 reserved-memory/ojls-rx@18000000 \
          reserved-memory/ojls-desc@ffc0000 udmabuf-ojls-tx udmabuf-ojls-rx \
-         udmabuf-ojls-desc openjls@40000000 dma@40400000; do
+         udmabuf-ojls-desc openjls@40000000 ready_gate@40010000 dma@40400000; do
   [ -d "$dt/$n" ] || missing="$missing $n"
 done
 if [ -n "$missing" ]; then
