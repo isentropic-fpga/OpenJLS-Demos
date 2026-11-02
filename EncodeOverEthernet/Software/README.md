@@ -39,6 +39,7 @@ ojls_server [options]
   -p PORT          TCP port (default 19020)
   --regs NAME      UIO device of the openjls_axis_regs bank (default "openjls")
   --dma NAME       UIO device of the AXI DMA (default "dma")
+  --gate NAME      UIO device of axis_ready_gate (default "ready_gate")
   --tx-buf NAME    u-dma-buf for pixels in (default "udmabuf-ojls-tx")
   --rx-buf NAME    u-dma-buf for bitstream out (default "udmabuf-ojls-rx")
   --desc-buf NAME  u-dma-buf for the SG descriptor rings (default "udmabuf-ojls-desc")
@@ -52,9 +53,13 @@ Linux machine, with no FPGA involved.
 
 ```
 ojls_client [options] HOST INPUT.pgm [OUTPUT.jls]
+ojls_client [options] -s OUTDIR HOST INPUT.pgm...
   -p PORT     TCP port (default 19020)
   -b BITS     override bitness (default: derived from the PGM maxval)
   -n COUNT    send the image COUNT times (throughput test, default 1)
+  -s OUTDIR   stream same-size images, in order, with no core reset between them;
+              takes any number of inputs, writes OUTDIR/<stem>.jls for each
+  -r PCT      encoder output ready level for -s, 1..100 (default 100)
 ```
 
 Input is binary PGM (`P5`), grayscale, 8..16 bpp. Bitness comes from the maxval
