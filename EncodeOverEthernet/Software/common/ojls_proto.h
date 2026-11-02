@@ -11,7 +11,12 @@
  * A 20-byte little-endian header, packed byte by byte (no struct padding or
  * host endianness), then the payload: raw pixels in ENCODE_REQ (row-major,
  * 1 byte/pixel at bitness 8, else 2 bytes LE), the .jls stream in
- * ENCODE_RESP (empty when status != 0). */
+ * ENCODE_RESP (empty when status != 0).
+ *
+ * STREAM_REQ carries N same-size images back to back, encoded with no core reset
+ * between them; N = payload_len / image size. STREAM_RESP is N u32 LE lengths,
+ * then the N .jls streams. A failed stream still reports the images that closed:
+ * length 0 means the image never did. A rejected request gets an empty ENCODE_RESP. */
 
 #ifndef OJLS_PROTO_H
 #define OJLS_PROTO_H
@@ -27,6 +32,8 @@
 /* Message types */
 #define OJLS_MSG_ENCODE_REQ  1u
 #define OJLS_MSG_ENCODE_RESP 2u
+#define OJLS_MSG_STREAM_REQ  3u
+#define OJLS_MSG_STREAM_RESP 4u
 
 /* Response status codes */
 #define OJLS_ST_OK            0u
@@ -39,6 +46,7 @@
 #define OJLS_ST_TOO_LARGE     7u /* exceeds the board's DMA buffer sizes    */
 #define OJLS_ST_HW_ERROR      8u /* DMA error — see server log              */
 #define OJLS_ST_HW_TIMEOUT    9u /* encode did not finish in time           */
+#define OJLS_ST_BAD_READY    10u /* ready_pct above 100                     */
 
 struct ojls_hdr {
     uint32_t magic;
@@ -48,6 +56,7 @@ struct ojls_hdr {
     uint16_t width;
     uint16_t height;
     uint8_t  bitness;
+    uint8_t  ready_pct; /* STREAM_REQ: encoder output ready %, 0 means 100 */
     uint32_t payload_len;
 };
 
@@ -84,7 +93,7 @@ static inline void ojls_hdr_pack(uint8_t buf[OJLS_PROTO_HDR_LEN], const struct o
     ojls_put_u16(buf + 8, h->width);
     ojls_put_u16(buf + 10, h->height);
     buf[12] = h->bitness;
-    buf[13] = 0;
+    buf[13] = h->ready_pct;
     buf[14] = 0;
     buf[15] = 0;
     ojls_put_u32(buf + 16, h->payload_len);
@@ -99,6 +108,7 @@ static inline void ojls_hdr_unpack(struct ojls_hdr *h, const uint8_t buf[OJLS_PR
     h->width       = ojls_get_u16(buf + 8);
     h->height      = ojls_get_u16(buf + 10);
     h->bitness     = buf[12];
+    h->ready_pct   = buf[13];
     h->payload_len = ojls_get_u32(buf + 16);
 }
 
@@ -115,6 +125,7 @@ static inline const char *ojls_status_str(uint8_t status)
     case OJLS_ST_TOO_LARGE:     return "image exceeds board DMA buffers";
     case OJLS_ST_HW_ERROR:      return "hardware/DMA error";
     case OJLS_ST_HW_TIMEOUT:    return "hardware timeout";
+    case OJLS_ST_BAD_READY:     return "ready level above 100%";
     default:                    return "unknown status";
     }
 }
