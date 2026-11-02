@@ -54,6 +54,11 @@
                 reg = <0x40000000 0x1000>;
             };
 
+            ready_gate@40010000 {
+                compatible = "generic-uio";
+                reg = <0x40010000 0x1000>;
+            };
+
             dma@40400000 {
                 compatible = "generic-uio";
                 reg = <0x40400000 0x10000>;
