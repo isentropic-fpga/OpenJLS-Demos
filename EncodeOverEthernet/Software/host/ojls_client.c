@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -168,22 +169,199 @@ static void usage(const char *argv0)
 {
     fprintf(stderr,
             "Usage: %s [options] HOST INPUT.pgm [OUTPUT.jls]\n"
+            "       %s [options] -s OUTDIR HOST INPUT.pgm...\n"
             "  -p PORT     TCP port (default %d)\n"
             "  -b BITS     override bitness (default: derived from PGM maxval)\n"
             "  -n COUNT    send the image COUNT times (throughput test, default 1)\n"
+            "  -s OUTDIR   stream same-size images, in order, with no core reset between\n"
+            "              them; writes OUTDIR/<stem>.jls for each image that closes\n"
+            "  -r PCT      encoder output ready level for -s, 1..100 (default 100)\n"
             "Default OUTPUT is INPUT with a .jls suffix.\n",
-            argv0, OJLS_PROTO_PORT);
+            argv0, argv0, OJLS_PROTO_PORT);
+}
+
+static int connect_host(const char *host, int port)
+{
+    struct addrinfo hints, *ai = NULL;
+    char            port_str[16];
+    int             fd = -1, yes = 1;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    snprintf(port_str, sizeof(port_str), "%d", port);
+    if (getaddrinfo(host, port_str, &hints, &ai) != 0 || ai == NULL) {
+        fprintf(stderr, "cannot resolve %s\n", host);
+        return -1;
+    }
+
+    for (const struct addrinfo *a = ai; a != NULL; a = a->ai_next) {
+        fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+        if (fd < 0)
+            continue;
+        if (connect(fd, a->ai_addr, a->ai_addrlen) == 0)
+            break;
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(ai);
+    if (fd < 0) {
+        fprintf(stderr, "cannot connect to %s:%d: %s\n", host, port, strerror(errno));
+        return -1;
+    }
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+    return fd;
+}
+
+static int write_jls(const char *dir, const char *in_path, const uint8_t *data, uint32_t len)
+{
+    const char *base = strrchr(in_path, '/');
+    const char *dot;
+    char        path[4096];
+    FILE       *f;
+    int         ok;
+
+    base = (base != NULL) ? base + 1 : in_path;
+    dot  = strrchr(base, '.');
+    snprintf(path, sizeof(path), "%s/%.*s.jls", dir,
+             (int)((dot != NULL) ? (size_t)(dot - base) : strlen(base)), base);
+
+    f = fopen(path, "wb");
+    if (f == NULL) {
+        fprintf(stderr, "%s: %s\n", path, strerror(errno));
+        return -1;
+    }
+    ok = fwrite(data, 1, len, f) == len;
+    if (fclose(f) != 0 || !ok) {
+        fprintf(stderr, "%s: write failed\n", path);
+        return -1;
+    }
+    return 0;
+}
+
+static int run_stream(const char *host, int port, const char *dir, int ready_pct,
+                      char **paths, uint32_t count)
+{
+    struct image    first = { 0 };
+    struct ojls_hdr req = {
+        .magic   = OJLS_PROTO_MAGIC,
+        .version = OJLS_PROTO_VERSION,
+        .type    = OJLS_MSG_STREAM_REQ,
+        .ready_pct = (uint8_t)ready_pct,
+    };
+    struct ojls_hdr resp;
+    uint8_t         hdr_raw[OJLS_PROTO_HDR_LEN];
+    uint8_t        *pixels = NULL, *payload = NULL;
+    uint32_t        closed = 0;
+    int64_t         t0;
+    int             fd = -1, rc = 1;
+
+    for (uint32_t i = 0; i < count; i++) {
+        struct image img;
+
+        if (pgm_load(paths[i], &img) != 0)
+            goto out;
+        if (i == 0) {
+            first  = img;
+            pixels = malloc((uint64_t)img.bytes * count);
+            if (pixels == NULL) {
+                free(img.pixels);
+                goto out;
+            }
+        } else if (img.width != first.width || img.height != first.height ||
+                   img.bitness != first.bitness || img.bytes != first.bytes) {
+            fprintf(stderr, "%s: not the size and depth of %s\n", paths[i], paths[0]);
+            free(img.pixels);
+            goto out;
+        }
+        memcpy(pixels + (uint64_t)i * first.bytes, img.pixels, first.bytes);
+        free(img.pixels);
+    }
+
+    req.width       = first.width;
+    req.height      = first.height;
+    req.bitness     = first.bitness;
+    req.payload_len = first.bytes * count;
+    ojls_hdr_pack(hdr_raw, &req);
+
+    fd = connect_host(host, port);
+    if (fd < 0)
+        goto out;
+
+    t0 = now_us();
+    if (send_full(fd, hdr_raw, sizeof(hdr_raw)) != 0 ||
+        send_full(fd, pixels, req.payload_len) != 0 ||
+        recv_full(fd, hdr_raw, sizeof(hdr_raw)) != 0) {
+        fprintf(stderr, "connection lost\n");
+        goto out;
+    }
+    ojls_hdr_unpack(&resp, hdr_raw);
+
+    if (resp.magic != OJLS_PROTO_MAGIC) {
+        fprintf(stderr, "malformed response\n");
+        goto out;
+    }
+    if (resp.status != OJLS_ST_OK && resp.payload_len == 0) {
+        fprintf(stderr, "server rejected the stream: %s\n", ojls_status_str(resp.status));
+        goto out;
+    }
+    if (resp.type != OJLS_MSG_STREAM_RESP || resp.payload_len < count * 4) {
+        fprintf(stderr, "malformed response\n");
+        goto out;
+    }
+
+    payload = malloc(resp.payload_len);
+    if (payload == NULL || recv_full(fd, payload, resp.payload_len) != 0) {
+        fprintf(stderr, "connection lost mid-payload\n");
+        goto out;
+    }
+
+    {
+        uint64_t total = count * 4;
+        uint64_t off   = count * 4;
+
+        for (uint32_t i = 0; i < count; i++)
+            total += ojls_get_u32(payload + 4 * i);
+        if (total != resp.payload_len) {
+            fprintf(stderr, "malformed response: lengths do not add up\n");
+            goto out;
+        }
+        for (uint32_t i = 0; i < count; i++) {
+            const uint32_t len = ojls_get_u32(payload + 4 * i);
+
+            if (len == 0)
+                continue;
+            if (write_jls(dir, paths[i], payload + off, len) != 0)
+                goto out;
+            off += len;
+            closed++;
+        }
+        printf("%u/%u images, %u -> %" PRIu64 " bytes in %.2f ms\n", closed, count,
+               req.payload_len, off - count * 4, (now_us() - t0) / 1e3);
+    }
+
+    if (resp.status != OJLS_ST_OK) {
+        fprintf(stderr, "stream failed after %u of %u images: %s\n",
+                closed, count, ojls_status_str(resp.status));
+        goto out;
+    }
+    rc = 0;
+
+out:
+    if (fd >= 0)
+        close(fd);
+    free(payload);
+    free(pixels);
+    return rc;
 }
 
 int main(int argc, char **argv)
 {
-    const char     *host = NULL, *in_path = NULL, *out_path = NULL;
-    int             port = OJLS_PROTO_PORT, bitness_ovr = 0, count = 1;
+    const char     *host = NULL, *in_path = NULL, *out_path = NULL, *stream_dir = NULL;
+    int             port = OJLS_PROTO_PORT, bitness_ovr = 0, count = 1, ready_pct = 100;
     char            out_buf[4096];
     struct image    img;
-    struct addrinfo hints, *ai = NULL;
-    char            port_str[16];
-    int             fd = -1, yes = 1, rc = 1;
+    int             fd = -1, rc = 1;
     uint8_t        *resp_payload = NULL;
     uint32_t        resp_len = 0;
     int64_t         t0, t_total;
@@ -195,11 +373,22 @@ int main(int argc, char **argv)
             bitness_ovr = atoi(argv[++i]);
         else if (strcmp(argv[i], "-n") == 0 && i + 1 < argc)
             count = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
+            stream_dir = argv[++i];
+        else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
+            ready_pct = atoi(argv[++i]);
+            if (ready_pct < 1 || ready_pct > 100) {
+                usage(argv[0]);
+                return 1;
+            }
+        }
         else if (argv[i][0] == '-') {
             usage(argv[0]);
             return (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) ? 0 : 1;
         } else if (host == NULL)
             host = argv[i];
+        else if (stream_dir != NULL)
+            return run_stream(host, port, stream_dir, ready_pct, argv + i, (uint32_t)(argc - i));
         else if (in_path == NULL)
             in_path = argv[i];
         else
@@ -232,29 +421,9 @@ int main(int argc, char **argv)
     printf("%s: %ux%u, %u bpp, %u bytes raw\n",
            in_path, img.width, img.height, img.bitness, img.bytes);
 
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family   = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    snprintf(port_str, sizeof(port_str), "%d", port);
-    if (getaddrinfo(host, port_str, &hints, &ai) != 0 || ai == NULL) {
-        fprintf(stderr, "cannot resolve %s\n", host);
+    fd = connect_host(host, port);
+    if (fd < 0)
         goto out;
-    }
-
-    for (const struct addrinfo *a = ai; a != NULL; a = a->ai_next) {
-        fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-        if (fd < 0)
-            continue;
-        if (connect(fd, a->ai_addr, a->ai_addrlen) == 0)
-            break;
-        close(fd);
-        fd = -1;
-    }
-    if (fd < 0) {
-        fprintf(stderr, "cannot connect to %s:%d: %s\n", host, port, strerror(errno));
-        goto out;
-    }
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
 
     t_total = 0;
     for (int i = 0; i < count; i++) {
@@ -325,8 +494,6 @@ int main(int argc, char **argv)
     rc = 0;
 
 out:
-    if (ai != NULL)
-        freeaddrinfo(ai);
     if (fd >= 0)
         close(fd);
     free(resp_payload);
