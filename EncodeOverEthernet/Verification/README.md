@@ -26,6 +26,16 @@ byte-exact. Then, per depth `N`:
 2. every image of depth `N` goes through `ojls_client`;
 3. each result is `cmp`'d against its CharLS golden.
 
+4. each set of `Images_stream/<N>-r*/` goes as one stream: one core reset, then
+   every image back to back, the same flow as the golden model's no-reset
+   sweep. Each image is `cmp`'d against its own CharLS golden.
+
+The sets are the golden model's, and the `r<N>` in a set's name is its ready
+level: `axis_ready_gate`, between the encoder and S2MM, gives the encoder ready
+on a pseudo-random N% of cycles. Low ready keeps the core's output backed up,
+which image boundaries need to reach the byte stuffer's merge window. The board
+has no counter for that window; only the golden simulation measures it.
+
 The restart matters: the server reads `BITNESS` from the CAPS register once at
 startup and rejects other depths. The overlay and `u-dma-buf` are
 depth-independent and stay loaded.
@@ -34,8 +44,8 @@ depth-independent and stay loaded.
 
 | File | Runs on | What |
 |---|---|---|
-| `run_hil_sweep.py` | host | preflight, CharLS check, per-depth reload + encode + compare, report |
-| `board_setup.sh` | board | bring-up after a power cycle: PL, overlay check, `u-dma-buf`, server |
+| `run_hil_sweep.py` | host | preflight, CharLS check, per-depth reload + encode + compare + clock check, report |
+| `board_setup.sh` | board | bring-up after a power cycle: 71.43 MHz FCLK0, PL, gate overlay and overlay check, `u-dma-buf`, server |
 | `board_reload.sh` | board | per-depth bitstream reload + server restart (staged by the driver) |
 
 ## Prerequisites
@@ -56,12 +66,15 @@ Preflight checks each and prints the command for anything missing.
 ./run_hil_sweep.py --dry-run               # preflight + depth histogram, no board needed
 ./run_hil_sweep.py                         # full sweep
 ./run_hil_sweep.py --bitness 8 12 --limit 5  # smoke test
+./run_hil_sweep.py --stream-only           # only the no-reset streams
+./run_hil_sweep.py --no-stream             # only the per-image encodes
 ```
 
 Exit status is non-zero on any mismatch or error. The sweep writes
-`out/results.csv` (per image: depth, name, status, bytes in and out) and
-`out/report.md` (per depth: images, pass/skip/fail, bytes in and checked,
-ratio, plus a total row). Both are committed; the encoded outputs and cached
+`out/results.csv` (per image: depth, name, status, bytes in and out; stream
+images are named `stream<set>-<image>`) and `out/report.md` (per depth, with
+per-image encodes and streams apart: images, pass/skip/fail, bytes in and
+checked, ratio, plus a total row). Both are committed; the encoded outputs and cached
 goldens are not.
 
 Configuration is by environment variable, documented in the header of
