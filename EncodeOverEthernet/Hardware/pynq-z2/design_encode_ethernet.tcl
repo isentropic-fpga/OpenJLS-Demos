@@ -134,7 +134,7 @@ xilinx.com:ip:processing_system7:5.5\
 xilinx.com:ip:axi_dma:7.1\
 xilinx.com:ip:smartconnect:1.0\
 xilinx.com:ip:proc_sys_reset:5.0\
-isentropic:openjls:openjls_axis_regs:1.3\
+isentropic:openjls:openjls_axis_regs:1.4\
 "
 
    set list_ips_missing ""
@@ -215,7 +215,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_DCI_PERIPHERAL_FREQMHZ {10.096154} \
     CONFIG.PCW_ACT_ENET0_PERIPHERAL_FREQMHZ {125.000000} \
     CONFIG.PCW_ACT_ENET1_PERIPHERAL_FREQMHZ {10.000000} \
-    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {70.000000} \
+    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {71.428571} \
     CONFIG.PCW_ACT_FPGA1_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_FPGA2_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_FPGA3_PERIPHERAL_FREQMHZ {10.000000} \
@@ -243,7 +243,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_CAN1_PERIPHERAL_CLKSRC {External} \
     CONFIG.PCW_CAN_PERIPHERAL_CLKSRC {IO PLL} \
     CONFIG.PCW_CAN_PERIPHERAL_VALID {0} \
-    CONFIG.PCW_CLK0_FREQ {70000000} \
+    CONFIG.PCW_CLK0_FREQ {71428571} \
     CONFIG.PCW_CLK1_FREQ {10000000} \
     CONFIG.PCW_CLK2_FREQ {10000000} \
     CONFIG.PCW_CLK3_FREQ {10000000} \
@@ -338,12 +338,12 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_EN_USB0 {1} \
     CONFIG.PCW_EN_USB1 {0} \
     CONFIG.PCW_EN_WDT {0} \
-    CONFIG.PCW_FCLK0_PERIPHERAL_CLKSRC {DDR PLL} \
+    CONFIG.PCW_FCLK0_PERIPHERAL_CLKSRC {IO PLL} \
     CONFIG.PCW_FCLK1_PERIPHERAL_CLKSRC {IO PLL} \
     CONFIG.PCW_FCLK2_PERIPHERAL_CLKSRC {IO PLL} \
     CONFIG.PCW_FCLK3_PERIPHERAL_CLKSRC {IO PLL} \
     CONFIG.PCW_FCLK_CLK0_BUF {TRUE} \
-    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {70} \
+    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {71.43} \
     CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {50} \
     CONFIG.PCW_FPGA2_PERIPHERAL_FREQMHZ {50} \
     CONFIG.PCW_FPGA3_PERIPHERAL_FREQMHZ {50} \
@@ -756,7 +756,7 @@ proc create_root_design { parentCell } {
   # Create instance: axi_smc, and set properties
   set axi_smc [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axi_smc ]
   set_property -dict [list \
-    CONFIG.NUM_MI {2} \
+    CONFIG.NUM_MI {3} \
     CONFIG.NUM_SI {1} \
   ] $axi_smc
 
@@ -773,12 +773,16 @@ proc create_root_design { parentCell } {
 
 
   # Create instance: openjls_axis_regs_0, and set properties
-  set openjls_axis_regs_0 [ create_bd_cell -type ip -vlnv isentropic:openjls:openjls_axis_regs:1.3 openjls_axis_regs_0 ]
+  set openjls_axis_regs_0 [ create_bd_cell -type ip -vlnv isentropic:openjls:openjls_axis_regs:1.4 openjls_axis_regs_0 ]
   set_property -dict [list \
     CONFIG.BITNESS {8} \
     CONFIG.MAX_IMAGE_HEIGHT {65535} \
     CONFIG.MAX_IMAGE_WIDTH {65535} \
   ] $openjls_axis_regs_0
+
+
+  # Create instance: axis_ready_gate_0
+  set axis_ready_gate_0 [ create_bd_cell -type module -reference axis_ready_gate axis_ready_gate_0 ]
 
 
   # Create interface connections
@@ -789,7 +793,9 @@ proc create_root_design { parentCell } {
   connect_bd_intf_net -intf_net axi_mem_intercon_M00_AXI [get_bd_intf_pins axi_mem_intercon/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP0]
   connect_bd_intf_net -intf_net axi_smc_M00_AXI [get_bd_intf_pins axi_smc/M00_AXI] [get_bd_intf_pins axi_dma_0/S_AXI_LITE]
   connect_bd_intf_net -intf_net axi_smc_M01_AXI [get_bd_intf_pins axi_smc/M01_AXI] [get_bd_intf_pins openjls_axis_regs_0/s_axi_ctrl]
-  connect_bd_intf_net -intf_net openjls_axis_regs_0_m_axis_jls [get_bd_intf_pins openjls_axis_regs_0/m_axis_jls] [get_bd_intf_pins axi_dma_0/S_AXIS_S2MM]
+  connect_bd_intf_net -intf_net axi_smc_M02_AXI [get_bd_intf_pins axi_smc/M02_AXI] [get_bd_intf_pins axis_ready_gate_0/s_axi_ctrl]
+  connect_bd_intf_net -intf_net openjls_axis_regs_0_m_axis_jls [get_bd_intf_pins openjls_axis_regs_0/m_axis_jls] [get_bd_intf_pins axis_ready_gate_0/s_axis]
+  connect_bd_intf_net -intf_net axis_ready_gate_0_m_axis [get_bd_intf_pins axis_ready_gate_0/m_axis] [get_bd_intf_pins axi_dma_0/S_AXIS_S2MM]
   connect_bd_intf_net -intf_net processing_system7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins processing_system7_0/DDR]
   connect_bd_intf_net -intf_net processing_system7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins processing_system7_0/FIXED_IO]
   connect_bd_intf_net -intf_net processing_system7_0_M_AXI_GP0 [get_bd_intf_pins processing_system7_0/M_AXI_GP0] [get_bd_intf_pins axi_smc/S00_AXI]
@@ -809,6 +815,7 @@ proc create_root_design { parentCell } {
   [get_bd_pins axi_mem_intercon/S01_ACLK] \
   [get_bd_pins axi_dma_0/m_axi_sg_aclk] \
   [get_bd_pins axi_mem_intercon/S02_ACLK] \
+  [get_bd_pins axis_ready_gate_0/aclk] \
   [get_bd_pins openjls_axis_regs_0/aclk]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N  [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
   [get_bd_pins rst_ps7_0_100M/ext_reset_in]
@@ -820,10 +827,12 @@ proc create_root_design { parentCell } {
   [get_bd_pins axi_mem_intercon/ARESETN] \
   [get_bd_pins axi_mem_intercon/S01_ARESETN] \
   [get_bd_pins axi_mem_intercon/S02_ARESETN] \
+  [get_bd_pins axis_ready_gate_0/aresetn] \
   [get_bd_pins openjls_axis_regs_0/aresetn]
 
   # Create address segments
   assign_bd_address -offset 0x40400000 -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_dma_0/S_AXI_LITE/Reg] -force
+  assign_bd_address -offset 0x40010000 -range 0x00001000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axis_ready_gate_0/s_axi_ctrl/reg0] -force
   assign_bd_address -offset 0x40000000 -range 0x00001000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs openjls_axis_regs_0/s_axi_ctrl/reg0] -force
   assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_0/Data_MM2S] [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] -force
   assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_0/Data_S2MM] [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] -force
