@@ -33,6 +33,18 @@ state="$(cat /sys/class/fpga_manager/fpga0/state)"
 echo "fpga state: $state"
 [ "$state" = operating ] || { echo "fpga not operating after reload" >&2; exit 1; }
 
+# Rewritten per reload: FCLK0 once went back to 100 MHz soon after boot. Keep the
+# SLCR unlocked, see board_setup.sh.
+python3 - <<'PY'
+import mmap, os, struct
+m = mmap.mmap(os.open("/dev/mem", os.O_RDWR | os.O_SYNC), 4096, offset=0xF8000000)
+m[0x008:0x00C] = struct.pack("<I", 0xDF0D)
+m[0x170:0x174] = struct.pack("<I", 0x00100E00)  # IO PLL / 14 = 71.43 MHz
+ctrl = struct.unpack("<I", m[0x170:0x174])[0]
+if ctrl != 0x00100E00:
+    raise SystemExit("FPGA0_CLK_CTRL reads 0x%08x" % ctrl)
+PY
+
 # setsid: a server holding the ssh channel would hang the caller.
 # stdbuf -oL: the BITNESS banner checked below must not sit in a block buffer.
 cd "$server_dir"
