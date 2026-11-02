@@ -129,7 +129,7 @@ sudo ./setup_bootargs.sh && sudo reboot
 ```sh
 BOARD=xilinx@192.168.2.99
 scp -r Hardware/pynq-z2/bitstreams "$BOARD:~/"
-scp Hardware/pynq-z2/u-dma-buf.ko Verification/board_setup.sh "$BOARD:~/"
+scp Hardware/pynq-z2/u-dma-buf.ko Hardware/pynq-z2/ready_gate_rt.dtbo Verification/board_setup.sh "$BOARD:~/"
 ```
 
 `board_setup.sh <N>` loads the depth-`<N>` bitstream (8..16); `<N>` **must match
@@ -198,7 +198,7 @@ Then run it (target defaults to `xilinx@192.168.2.99`; override with `BOARD=`):
 ```sh
 cd EncodeOverEthernet/Verification
 ./run_hil_sweep.py --dry-run   # preflight: board, ssh key, corpus, CharLS
-./run_hil_sweep.py             # every depth, 5639 images
+./run_hil_sweep.py             # every depth, 5639 images + 6000 stream images
 ```
 
 `--dry-run` prints the exact command for anything missing. The full sweep
@@ -209,7 +209,7 @@ smoke test.
 ==================== summary ====================
   b8 :  732 pass     0 fail     0 skip   [OK]
   ...
-  all: 5639 pass, 0 fail, 0 skip
+  all: 11639 pass, 0 fail, 0 skip
 ```
 
 Exit status is non-zero on any mismatch; per-image results go to
