@@ -43,6 +43,7 @@ import argparse
 import csv
 import filecmp
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -169,7 +170,7 @@ if [ -d /sys/class/fpga_manager/fpga0 ]; then echo "fpga:mgr:ok"; else echo "fpg
 """
 
 
-FCLK_CTRL = "00100e00"  # IO PLL / 14 = 71.43 MHz
+FCLK_CTRL = "00100a00"  # IO PLL / 10 = 100 MHz
 FCLK_READ_PY = ("import mmap,os,struct;"
                 "m=mmap.mmap(os.open('/dev/mem',os.O_RDONLY|os.O_SYNC),4096,prot=mmap.PROT_READ,"
                 "offset=0xF8000000);print('%08x'%struct.unpack('<I',m[0x170:0x174])[0])")
@@ -263,7 +264,7 @@ def board_probe(args):
     ctrl = read_fclk(args)
     if ctrl != FCLK_CTRL:
         problems.append(
-            f"FPGA0_CLK_CTRL is {ctrl or 'unreadable'}, expected {FCLK_CTRL} (71.43 MHz)\n"
+            f"FPGA0_CLK_CTRL is {ctrl or 'unreadable'}, expected {FCLK_CTRL} (100 MHz)\n"
             "    FCLK0 resets to the boot image's rate on every boot. On the board, as root:\n"
             "    sudo env HOME=$HOME ./board_setup.sh 8")
 
@@ -512,6 +513,15 @@ def report_table(f, results):
         f.write(f"| {n} | {imgs} | {ok} | {skip} | {fail} | {in_b} | {jls_b} | {ratio} |\n")
 
 
+def ip_version():
+    tcl = os.path.join(os.path.dirname(DEMO), "ThirdParty", "OpenJLS", "Scripts", "package_ip.tcl")
+    try:
+        m = re.search(r"^set version\s+(\S+)", open(tcl).read(), re.M)
+    except OSError:
+        return "?"
+    return m.group(1) if m else "?"
+
+
 def write_report(results):
     path = os.path.join(OUT_DIR, "report.md")
     single = [r for r in results if not r[1].startswith("stream")]
@@ -519,7 +529,8 @@ def write_report(results):
     with open(path, "w") as f:
         f.write("# Hardware-in-the-loop results\n\n"
                 "Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; "
-                "per-image results are in results.csv.\n\n")
+                "per-image results are in results.csv.\n\n"
+                f"OpenJLS v{ip_version()}, FCLK0 100 MHz.\n\n")
         if single:
             f.write("## One image per reset\n\n")
             report_table(f, single)

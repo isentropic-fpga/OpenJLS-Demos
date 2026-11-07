@@ -39,9 +39,9 @@ python3 - <<'PY'
 import mmap, os, struct
 m = mmap.mmap(os.open("/dev/mem", os.O_RDWR | os.O_SYNC), 4096, offset=0xF8000000)
 m[0x008:0x00C] = struct.pack("<I", 0xDF0D)
-m[0x170:0x174] = struct.pack("<I", 0x00100E00)  # IO PLL / 14 = 71.43 MHz
+m[0x170:0x174] = struct.pack("<I", 0x00100A00)  # IO PLL / 10 = 100 MHz
 ctrl = struct.unpack("<I", m[0x170:0x174])[0]
-if ctrl != 0x00100E00:
+if ctrl != 0x00100A00:
     raise SystemExit("FPGA0_CLK_CTRL reads 0x%08x" % ctrl)
 PY
 

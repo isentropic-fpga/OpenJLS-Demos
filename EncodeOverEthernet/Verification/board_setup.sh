@@ -37,9 +37,9 @@ rmmod u-dma-buf 2>/dev/null || true
 # A stale configfs overlay's u-dma-buf nodes would shadow the boot-time ones.
 [ -d "$ov" ] && { echo "(removing stale runtime overlay)"; rmdir "$ov" 2>/dev/null || true; }
 
-echo "=== 2. set FCLK0 to 71.43 MHz, load PL image ($fw) ==="
-# FCLK0 comes from BOOT.BIN (100 MHz on this image); loading a bitstream leaves it
-# alone, so the 71.43 MHz the design closes timing at must be set here: IO PLL / 14.
+echo "=== 2. set FCLK0 to 100 MHz, load PL image ($fw) ==="
+# FCLK0 comes from BOOT.BIN; loading a bitstream leaves it alone, so the 100 MHz
+# the design closes timing at is set here explicitly: IO PLL / 10.
 python3 - <<'PY'
 import mmap, os, struct
 m = mmap.mmap(os.open("/dev/mem", os.O_RDWR | os.O_SYNC), 4096, offset=0xF8000000)
@@ -47,9 +47,9 @@ def wr(a, v): m[a:a + 4] = struct.pack("<I", v)
 # Never relock the SLCR: Linux leaves it unlocked and writes it during PL loads
 # and on reboot. Locked, loads soon die with an AXI timeout and reboot hangs.
 wr(0x008, 0xDF0D)      # SLCR unlock
-wr(0x170, 0x00100E00)  # FPGA0_CLK_CTRL
+wr(0x170, 0x00100A00)  # FPGA0_CLK_CTRL
 ctrl = struct.unpack("<I", m[0x170:0x174])[0]
-if ctrl != 0x00100E00:
+if ctrl != 0x00100A00:
     raise SystemExit("FPGA0_CLK_CTRL reads 0x%08x" % ctrl)
 PY
 cp -f "$src" "$fw_dir/$fw"
