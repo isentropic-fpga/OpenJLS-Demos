@@ -45,7 +45,7 @@ depth-independent and stay loaded.
 | File | Runs on | What |
 |---|---|---|
 | `run_hil_sweep.py` | host | preflight, CharLS check, per-depth reload + encode + compare + clock check, report |
-| `board_setup.sh` | board | bring-up after a power cycle: 71.43 MHz FCLK0, PL, gate overlay and overlay check, `u-dma-buf`, server |
+| `board_setup.sh` | board | bring-up after a power cycle: 100 MHz FCLK0, PL, gate overlay and overlay check, `u-dma-buf`, server |
 | `board_reload.sh` | board | per-depth bitstream reload + server restart (staged by the driver) |
 
 ## Prerequisites
