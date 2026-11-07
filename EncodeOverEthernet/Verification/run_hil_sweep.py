@@ -169,7 +169,7 @@ if [ -d /sys/class/fpga_manager/fpga0 ]; then echo "fpga:mgr:ok"; else echo "fpg
 """
 
 
-FCLK_CTRL = "00100e00"  # IO PLL / 14 = 71.43 MHz
+FCLK_CTRL = "00100a00"  # IO PLL / 10 = 100 MHz
 FCLK_READ_PY = ("import mmap,os,struct;"
                 "m=mmap.mmap(os.open('/dev/mem',os.O_RDONLY|os.O_SYNC),4096,prot=mmap.PROT_READ,"
                 "offset=0xF8000000);print('%08x'%struct.unpack('<I',m[0x170:0x174])[0])")
@@ -263,7 +263,7 @@ def board_probe(args):
     ctrl = read_fclk(args)
     if ctrl != FCLK_CTRL:
         problems.append(
-            f"FPGA0_CLK_CTRL is {ctrl or 'unreadable'}, expected {FCLK_CTRL} (71.43 MHz)\n"
+            f"FPGA0_CLK_CTRL is {ctrl or 'unreadable'}, expected {FCLK_CTRL} (100 MHz)\n"
             "    FCLK0 resets to the boot image's rate on every boot. On the board, as root:\n"
             "    sudo env HOME=$HOME ./board_setup.sh 8")
 
