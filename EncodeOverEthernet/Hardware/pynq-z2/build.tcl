@@ -48,8 +48,8 @@ set ip_repo [file join $openjls_dir Sources Xilinx ip_repo]
 if {![file isdirectory $ip_repo]} {
     error "Packaged IP repo not found at $ip_repo — run\
            \"git submodule update --init --recursive\" from the repo root. The\
-           block design instantiates isentropic:openjls:openjls_axis_regs:1.4,\
-           so OpenJLS v1.4 or later is required; the submodule is pinned at a\
+           block design instantiates isentropic:openjls:openjls_axis_regs:1.5,\
+           so OpenJLS v1.5 or later is required; the submodule is pinned at a\
            commit that provides it."
 }
 set_property ip_repo_paths $ip_repo [current_project]
@@ -80,8 +80,8 @@ set_property top design_encode_ethernet_wrapper [get_filesets sources_1]
 update_compile_order -fileset sources_1
 
 # The limit is logic depth, not congestion (the part is ~25% full); the
-# strategy is kept as a margin. The fabric clock is 71.43 MHz (IO PLL 1000 / 14,
-# see INTERNALS.md). With IP 1.4 the tightest depth is b11 (WNS +0.831 ns).
+# strategy is kept as a margin. The fabric clock is 100 MHz (IO PLL 1000 / 10,
+# see INTERNALS.md). With IP 1.5 the tightest depth is b16 (WNS +0.103 ns).
 set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]
 
 if {[info exists argv] && [lsearch $argv "--bitstream"] >= 0} {
