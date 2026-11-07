@@ -4,7 +4,7 @@
 > these files ship prebuilt. This page covers *rebuilding* them.
 
 PS7 GEM handles Ethernet; the OpenJLS encoder (`openjls_axis_regs`) and an AXI
-DMA in Scatter/Gather mode sit in the PL on a 71.43 MHz fabric clock.
+DMA in Scatter/Gather mode sit in the PL on a 100 MHz fabric clock.
 [`INTERNALS.md`](INTERNALS.md) has the rationale, the manual bring-up and
 porting notes.
 
