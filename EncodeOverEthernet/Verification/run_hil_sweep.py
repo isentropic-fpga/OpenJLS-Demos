@@ -43,6 +43,7 @@ import argparse
 import csv
 import filecmp
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -512,6 +513,15 @@ def report_table(f, results):
         f.write(f"| {n} | {imgs} | {ok} | {skip} | {fail} | {in_b} | {jls_b} | {ratio} |\n")
 
 
+def ip_version():
+    tcl = os.path.join(os.path.dirname(DEMO), "ThirdParty", "OpenJLS", "Scripts", "package_ip.tcl")
+    try:
+        m = re.search(r"^set version\s+(\S+)", open(tcl).read(), re.M)
+    except OSError:
+        return "?"
+    return m.group(1) if m else "?"
+
+
 def write_report(results):
     path = os.path.join(OUT_DIR, "report.md")
     single = [r for r in results if not r[1].startswith("stream")]
@@ -519,7 +529,8 @@ def write_report(results):
     with open(path, "w") as f:
         f.write("# Hardware-in-the-loop results\n\n"
                 "Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; "
-                "per-image results are in results.csv.\n\n")
+                "per-image results are in results.csv.\n\n"
+                f"OpenJLS v{ip_version()}, FCLK0 100 MHz.\n\n")
         if single:
             f.write("## One image per reset\n\n")
             report_table(f, single)

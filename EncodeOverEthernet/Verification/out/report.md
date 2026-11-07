@@ -2,6 +2,8 @@
 
 Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; per-image results are in results.csv.
 
+OpenJLS v1.5, FCLK0 100 MHz.
+
 ## One image per reset
 
 | Depth | Images | Pass | Skip | Fail | Input (B) | JLS checked (B) | Ratio |
