@@ -397,6 +397,24 @@ def stream_sets():
     return {n: sorted(v, key=lambda t: -t[1]) for n, v in sets.items()}
 
 
+def corpus_problems():
+    """The corpus must come from the submodule's current prepare_images.sh."""
+    prep = os.path.join(OJLS, "Verification", "Golden model", "prepare_images.sh")
+    idsh = os.path.join(OJLS, "Verification", "Golden model", "corpus_id.sh")
+    if not os.path.exists(idsh):
+        return [f"{idsh} missing\n    update the OpenJLS submodule"]
+    want = subprocess.run([idsh], capture_output=True, text=True, check=True).stdout.strip()
+    try:
+        with open(os.path.join(IMAGES_DIR, ".corpus_id")) as f:
+            have = f.read().strip()
+    except OSError:
+        have = "none"
+    if have == want:
+        return []
+    return [f"corpus in {IMAGES_DIR} has recipe ID {have}, the current recipe is {want}\n"
+            f"    prepare it again: '{prep}'"]
+
+
 def preflight(args):
     problems = []
     if STREAM_IMAGES_DIR and not args.no_stream and not stream_sets():
@@ -409,6 +427,8 @@ def preflight(args):
         problems.append(
             f"no corpus PGMs in {IMAGES_DIR}\n"
             f"    prepare it: '{OJLS}/Verification/Golden model/prepare_images.sh'")
+    if has_pgm:
+        problems += corpus_problems()
     if not os.path.exists(CHARLS):
         problems.append(
             f"charls-cli not built at {CHARLS}\n"
