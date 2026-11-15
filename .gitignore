@@ -20,3 +20,8 @@ EncodeOverEthernet/Hardware/pynq-z2/NA/
 # in-tree for convenience; the Tcl and .dtso stay the source of truth.
 !EncodeOverEthernet/Hardware/pynq-z2/bitstreams/*.bit.bin
 !EncodeOverEthernet/Hardware/pynq-z2/openjls.dtbo
+
+# Provenance hashes taken at build start, consumed at stamp
+.b*.prov.pending
+
+__pycache__/
