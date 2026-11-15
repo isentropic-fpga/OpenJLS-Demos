@@ -57,6 +57,7 @@ for _ in $(seq 1 25); do
 done
 if grep -q "BITNESS $b\b" /tmp/ojls_server.log 2>/dev/null; then
   echo "server up, BITNESS $b"
+  grep -m1 '^openjls: v' /tmp/ojls_server.log
 else
   echo "server did not report BITNESS $b — log:" >&2
   cat /tmp/ojls_server.log >&2 || true
