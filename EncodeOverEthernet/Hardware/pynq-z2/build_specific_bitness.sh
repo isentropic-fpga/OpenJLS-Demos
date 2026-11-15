@@ -23,6 +23,7 @@ done
 if [ $bit = 1 ]; then
   wrapper="$HERE/build/encode_ethernet.runs/impl_1/design_encode_ethernet_wrapper.bit"
   rm -f "$wrapper"
+  python3 "$HERE/../../Verification/provenance.py" begin "$b"
   # build.tcl exits nonzero on negative WNS, even though the .bit is written.
   vivado -mode batch -source "$HERE/build.tcl" -tclargs --bitstream --bitness "$b"
   # The Linux FPGA manager takes the raw .bin, not .bit.
@@ -32,5 +33,6 @@ if [ $bit = 1 ]; then
   ( cd "$tmp" && bootgen -image system.bif -arch zynq -process_bitstream bin -w )
   mkdir -p "$HERE/bitstreams"
   mv "$tmp/system.bit.bin" "$HERE/bitstreams/encode_eth_openjls_b$b.bit.bin"
+  python3 "$HERE/../../Verification/provenance.py" stamp "$b"
 fi
 dtc -@ -O dtb -o "$HERE/openjls.dtbo" "$HERE/openjls.dtso"
