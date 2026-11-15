@@ -38,10 +38,15 @@ Usage:
   ./run_hil_sweep.py --limit 5       # at most 5 images per depth and per stream
   ./run_hil_sweep.py --stream-only   # only the no-reset streams
   ./run_hil_sweep.py --no-stream     # only the per-image encodes
+
+A full sweep writes OUT_DIR/results.csv. Any restricted or degraded run
+(--bitness, --limit, --no-stream, --stream-only, --no-gate, a missing or
+unverified bitstream) writes OUT_DIR/partial/ instead and states why there.
 """
 import argparse
 import csv
 import filecmp
+import hashlib
 import os
 import re
 import shlex
@@ -51,6 +56,8 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+import provenance
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEMO = os.path.dirname(HERE)
@@ -285,10 +292,38 @@ def board_probe(args):
 
 def charls_encode(src, dst):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    r = subprocess.run([CHARLS, "encode", src, dst],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        r = subprocess.run([CHARLS, "encode", src, dst],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=600)
+    except subprocess.TimeoutExpired:
+        raise Fail("charls encode timed out after 600 s")
     if r.returncode != 0:
         raise Fail(f"charls encode failed: {r.stderr.decode(errors='replace').strip()}")
+
+
+_CHARLS_ID = None
+
+
+def golden_dir():
+    """Per CharLS binary, so a rebuilt CharLS never reuses old goldens."""
+    global _CHARLS_ID
+    if _CHARLS_ID is None:
+        _CHARLS_ID = provenance.sha256_file(CHARLS)[:12]
+    return os.path.join(OUT_DIR, "golden", _CHARLS_ID)
+
+
+def golden_for(path):
+    """CharLS golden keyed by PGM content, not mtime."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    stem = os.path.splitext(os.path.basename(path))[0]
+    g = os.path.join(golden_dir(), f"{stem}-{h.hexdigest()[:16]}.jls")
+    if not os.path.exists(g):
+        charls_encode(path, g + ".tmp")
+        os.replace(g + ".tmp", g)
+    return g
 
 
 def charls_gate():
@@ -392,6 +427,10 @@ def preflight(args):
             f"    build them: '{os.path.join(DEMO, 'Hardware', 'pynq-z2', 'build_all_bitness.sh')}'")
     if not args.dry_run and not args.board:
         problems.append("BOARD is required for a live sweep (or pass --dry-run)")
+    stale = provenance.stale_ip_files()
+    if stale:
+        problems.append("IP repo differs from Sources/ (" + ", ".join(stale) + "); the bitstreams "
+                        "cannot match the RTL\n    repackage: ThirdParty/OpenJLS/Scripts/package_ip.tcl")
 
     # On --dry-run, board findings are warnings.
     if args.board:
@@ -425,15 +464,20 @@ def reload_board(args, bitness):
     sudo = f"echo {shlex.quote(args.sudo_pass)} | sudo -S" if args.sudo_pass else "sudo"
     remote = (f"{sudo} bash {board_home}/board_reload.sh {bitness} "
               f"{shlex.quote(server_dir)} /lib/firmware {shlex.quote(bs_dir)}")
-    run(ssh_prefix(args.board, args.ssh_key, args.ssh_opts) + [remote],
-        f"reload board to BITNESS {bitness}", timeout=60)
+    out = run(ssh_prefix(args.board, args.ssh_key, args.ssh_opts) + [remote],
+              f"reload board to BITNESS {bitness}", timeout=60)
 
     if not wait_for_port(args.board_ip, PORT):
         raise Fail(f"server did not open {args.board_ip}:{PORT} after reload")
+    m = re.search(r"^openjls: v(\d+\.\d+\.\d+)", out, re.M)
+    return m.group(1) if m else "?"
 
 
 def run(cmd, what, timeout=30):
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise Fail(f"{what} timed out after {timeout} s")
     if r.returncode != 0:
         raise Fail(f"{what} failed (rc={r.returncode}): {r.stdout.decode(errors='replace').strip()}")
     return r.stdout.decode(errors="replace")
@@ -446,36 +490,34 @@ def encode_one(args, path):
     if os.path.exists(out_jls):
         os.remove(out_jls)
     cmd = [CLIENT, "-p", str(PORT), args.board_ip, path, out_jls]
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+    except subprocess.TimeoutExpired:
+        raise Fail("client timed out after 120 s")
     if r.returncode != 0:
         lines = r.stdout.decode(errors="replace").strip().splitlines()
         raise Fail("client: " + (" | ".join(lines) if lines else "failed"))
-    golden = os.path.join(OUT_DIR, "golden", stem + ".jls")
-    if not os.path.exists(golden) or os.path.getmtime(golden) < os.path.getmtime(path):
-        charls_encode(path, golden)
-    return out_jls, golden
+    return out_jls, golden_for(path)
 
 
 def run_stream(args, n, set_name, ready, pgms):
     """Encode one set as a single stream; returns its result rows."""
     enc_dir = os.path.join(OUT_DIR, "encoded", "stream", set_name)
-    gold_dir = os.path.join(OUT_DIR, "golden", "stream", set_name)
     shutil.rmtree(enc_dir, ignore_errors=True)
     os.makedirs(enc_dir)
 
-    def golden(path):
-        g = os.path.join(gold_dir, os.path.splitext(os.path.basename(path))[0] + ".jls")
-        if not os.path.exists(g) or os.path.getmtime(g) < os.path.getmtime(path):
-            charls_encode(path, g)
-        return g
-
     with ThreadPoolExecutor(20) as pool:
-        goldens = list(pool.map(golden, pgms))
+        goldens = list(pool.map(golden_for, pgms))
 
-    r = subprocess.run([CLIENT, "-p", str(PORT), "-r", str(ready), "-s", enc_dir, args.board_ip] + pgms,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
     why = ""
-    if r.returncode != 0:
+    try:
+        r = subprocess.run([CLIENT, "-p", str(PORT), "-r", str(ready), "-s", enc_dir, args.board_ip] + pgms,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+    except subprocess.TimeoutExpired:
+        r = None
+        why = "client timed out after 300 s"
+        print(f"  {set_name}: {why}")
+    if r is not None and r.returncode != 0:
         why = " | ".join(r.stdout.decode(errors="replace").strip().splitlines()) or "client failed"
         print(f"  {set_name}: {why}")
 
@@ -513,24 +555,30 @@ def report_table(f, results):
         f.write(f"| {n} | {imgs} | {ok} | {skip} | {fail} | {in_b} | {jls_b} | {ratio} |\n")
 
 
-def ip_version():
-    tcl = os.path.join(os.path.dirname(DEMO), "ThirdParty", "OpenJLS", "Scripts", "package_ip.tcl")
-    try:
-        m = re.search(r"^set version\s+(\S+)", open(tcl).read(), re.M)
-    except OSError:
-        return "?"
-    return m.group(1) if m else "?"
+def version_text(versions):
+    """One version if every depth agrees, else each depth's."""
+    vs = sorted(set(versions.values()))
+    if len(vs) == 1:
+        return "v" + vs[0]
+    return ", ".join(f"b{n} v{v}" for n, v in sorted(versions.items())) or "v?"
 
 
-def write_report(results):
-    path = os.path.join(OUT_DIR, "report.md")
+def write_report(out_dir, results, prov, partial, versions):
+    path = os.path.join(out_dir, "report.md")
     single = [r for r in results if not r[1].startswith("stream")]
     streamed = [r for r in results if r[1].startswith("stream")]
     with open(path, "w") as f:
         f.write("# Hardware-in-the-loop results\n\n"
                 "Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; "
                 "per-image results are in results.csv.\n\n"
-                f"OpenJLS v{ip_version()}, FCLK0 100 MHz.\n\n")
+                f"OpenJLS {version_text(versions)} (version register), FCLK0 100 MHz.\n\n")
+        if partial:
+            f.write("**Partial run, not a release result:** " + "; ".join(partial) + ".\n\n")
+        f.write("| Depth | OpenJLS commit | Sources hash | Build hash |\n|--:|--|--|--|\n")
+        for n, rec in sorted(prov.items()):
+            f.write(f"| {n} | {rec.get('openjls_commit', '?')} | {rec.get('sources_hash', '?')} "
+                    f"| {rec.get('build_hash', '?')} |\n")
+        f.write("\n")
         if single:
             f.write("## One image per reset\n\n")
             report_table(f, single)
@@ -540,6 +588,16 @@ def write_report(results):
                     "is throttled in the PL to its ready level, the r<N> in its name.\n\n")
             report_table(f, streamed)
     return path
+
+
+def write_results(out_dir, results, prov, partial, versions):
+    os.makedirs(out_dir, exist_ok=True)
+    csv_path = os.path.join(out_dir, "results.csv")
+    with open(csv_path, "w", newline="") as f:
+        wtr = csv.writer(f)
+        wtr.writerow(["bitness", "image", "status", "in_bytes", "jls_bytes"])
+        wtr.writerows(results)
+    return csv_path, write_report(out_dir, results, prov, partial, versions)
 
 
 def main():
@@ -557,6 +615,8 @@ def main():
     mode.add_argument("--stream-only", action="store_true", help="only the no-reset streams")
     ap.add_argument("--no-gate", action="store_true",
                     help="skip the CharLS T16E0.JLS trust gate")
+    ap.add_argument("--allow-unverified", action="store_true",
+                    help="run bitstreams whose provenance does not match the tree (partial run)")
     args = ap.parse_args()
 
     args.board = env("BOARD", "xilinx@192.168.2.99")
@@ -602,6 +662,36 @@ def main():
     if not depths:
         die("nothing to run: no precision has both a bitstream and images")
 
+    partial = []
+    if args.bitness:
+        partial.append("--bitness " + " ".join(map(str, args.bitness)))
+    if args.limit:
+        partial.append(f"--limit {args.limit}")
+    if args.no_stream:
+        partial.append("--no-stream")
+    if args.stream_only:
+        partial.append("--stream-only")
+    if args.no_gate:
+        partial.append("--no-gate")
+    if missing:
+        partial.append("no bitstream for depth " + " ".join(map(str, missing)))
+    requested = bool(partial)
+
+    prov, bad = {}, []
+    for n in depths:
+        rec, p = provenance.check(n)
+        prov[n] = rec or {}
+        bad += p
+    if bad:
+        msg = "bitstream provenance does not match the tree:\n  - " + "\n  - ".join(bad)
+        if not (args.allow_unverified or args.dry_run):
+            die(msg + "\n    rebuild, or pass --allow-unverified for a partial run")
+        print("warn: " + msg, file=sys.stderr)
+        partial.append("bitstream provenance unverified")
+    for n in depths:
+        rec = prov[n]
+        print(f"  b{n}: OpenJLS {rec.get('openjls_commit', '?')}, sources {rec.get('sources_hash', '?')}")
+
     if not args.no_gate:
         charls_gate()
 
@@ -610,10 +700,14 @@ def main():
         return
 
     # -- live sweep
-    os.makedirs(OUT_DIR, exist_ok=True)
+    out_dir = os.path.join(OUT_DIR, "partial") if partial else OUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    if partial:
+        print(f"partial run ({'; '.join(partial)}): results go to {out_dir}")
     results = []           # (bitness, image, status, in_bytes, jls_bytes)
     totals = {}            # bitness -> [passed, failed, skipped]
     clock_bad = {}         # bitness -> FPGA0_CLK_CTRL read after its encodes
+    versions = {}          # bitness -> IP version the server read from the core
 
     for n in depths:
         imgs = sorted(buckets.get(n, []), key=lambda t: t[4])   # small first
@@ -621,8 +715,11 @@ def main():
             imgs = imgs[:args.limit]
         print(f"\n===== BITNESS {n}: {len(imgs)} images =====")
         try:
-            reload_board(args, n)
+            versions[n] = reload_board(args, n)
+            print(f"  core reports OpenJLS v{versions[n]}")
         except Fail as e:
+            partial.append(f"stopped at depth {n}: board reload failed")
+            write_results(os.path.join(OUT_DIR, "partial"), results, prov, partial, versions)
             die(f"BITNESS {n}: board reload failed: {e}")
         tally = [0, 0, 0]
         for path, w, h, bpp, in_bytes in imgs:
@@ -667,13 +764,7 @@ def main():
             print(f"  CLOCK CHANGED: FPGA0_CLK_CTRL is {clock_bad[n]}, expected {FCLK_CTRL}")
         print(f"  b{n}: {tally[0]} pass, {tally[1]} fail, {tally[2]} skip")
 
-    # -- results.csv
-    csv_path = os.path.join(OUT_DIR, "results.csv")
-    with open(csv_path, "w", newline="") as f:
-        wtr = csv.writer(f)
-        wtr.writerow(["bitness", "image", "status", "in_bytes", "jls_bytes"])
-        wtr.writerows(results)
-    report_path = write_report(results)
+    csv_path, report_path = write_results(out_dir, results, prov, partial, versions)
 
     # -- summary
     print("\n==================== summary ====================")
@@ -687,7 +778,10 @@ def main():
     print(f"  results: {csv_path}, {report_path}")
     for n, ctrl in clock_bad.items():
         print(f"  b{n}: clock was {ctrl} after its encodes, not {FCLK_CTRL}: not a valid run")
-    sys.exit(1 if tot_fail or clock_bad else 0)
+    if partial:
+        print(f"  PARTIAL: {'; '.join(partial)}")
+    # A requested partial run can pass; an unrequested one cannot.
+    sys.exit(1 if tot_fail or clock_bad or (partial and not requested) else 0)
 
 
 if __name__ == "__main__":
