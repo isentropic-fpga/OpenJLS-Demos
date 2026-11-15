@@ -81,7 +81,7 @@ update_compile_order -fileset sources_1
 
 # The limit is logic depth, not congestion (the part is ~25% full); the
 # strategy is kept as a margin. The fabric clock is 100 MHz (IO PLL 1000 / 10,
-# see INTERNALS.md). With IP 1.5 the tightest depth is b16 (WNS +0.103 ns).
+# see INTERNALS.md).
 set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]
 
 if {[info exists argv] && [lsearch $argv "--bitstream"] >= 0} {
