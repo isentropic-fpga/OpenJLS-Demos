@@ -27,6 +27,7 @@ fi
 build_one() {
   local b=$1 dir="$BUILD/b$b" log="$BUILD/logs/b$b.log" tmp
   rm -rf "$dir"; mkdir -p "$dir"
+  python3 "$HERE/../../Verification/provenance.py" begin "$b" || return 1
   # cd: Vivado's .Xil and the PS7 IP's NA/ directory would otherwise race.
   ( cd "$dir" && vivado -mode batch -source "$HERE/build.tcl" \
       -tclargs --bitstream --bitness "$b" --build-dir "$dir" --jobs 1 ) > "$log" 2>&1 || return 1
@@ -37,6 +38,7 @@ build_one() {
   ( cd "$tmp" && bootgen -image system.bif -arch zynq -process_bitstream bin -w ) >> "$log" 2>&1 \
     && mv "$tmp/system.bit.bin" "$HERE/bitstreams/encode_eth_openjls_b$b.bit.bin" || { rm -rf "$tmp"; return 1; }
   rm -rf "$tmp" "$dir"
+  python3 "$HERE/../../Verification/provenance.py" stamp "$b" >> "$log" || return 1
 }
 
 echo "${#DEPTHS[@]} depths, $JOBS at a time"
