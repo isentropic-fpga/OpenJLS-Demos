@@ -47,6 +47,7 @@ depth-independent and stay loaded.
 | `run_hil_sweep.py` | host | preflight, CharLS check, per-depth reload + encode + compare + clock check, report |
 | `board_setup.sh` | board | bring-up after a power cycle: 100 MHz FCLK0, PL, gate overlay and overlay check, `u-dma-buf`, server |
 | `board_reload.sh` | board | per-depth bitstream reload + server restart (staged by the driver) |
+| `provenance.py` | host | ties each bitstream to the RTL and build inputs it came from |
 
 ## Prerequisites
 
@@ -76,6 +77,28 @@ images are named `stream<set>-<image>`) and `out/report.md` (per depth, with
 per-image encodes and streams apart: images, pass/skip/fail, bytes in and
 checked, ratio, plus a total row). Both are committed; the encoded outputs and cached
 goldens are not.
+
+### Provenance and partial runs
+
+The build scripts stamp each bitstream with a `.prov.json` sidecar: the hash of
+the core sources (as in the core's `SOURCES_HASH`), the hash of the build
+inputs (packaged `openjls_axis_regs` IP, demo RTL, Tcl), both commits and the
+bitstream's SHA-256. The build inputs are hashed byte for byte, comments
+included, so keep build results such as slack out of them.
+Before it loads anything, the sweep checks every bitstream against the current
+tree (`./provenance.py check`) and stops on a mismatch, a missing sidecar or a
+stale `ip_repo` copy. `--allow-unverified` runs it anyway.
+
+A run that is not the full release sweep is partial: any of `--bitness`,
+`--limit`, `--no-stream`, `--stream-only`, `--no-gate`, `--allow-unverified`,
+a missing bitstream or a board reload failure. Partial results go to
+`out/partial/`, and the report there starts with the reason. `out/report.md`
+only changes on a full, verified sweep. A run that became partial without a
+flag asking for it exits non-zero.
+
+Golden `.jls` files are cached per CharLS build and image content
+(`golden/<charls-sha>/<image>-<pgm-sha>.jls`), so a new CharLS or a changed
+image never reuses a stale golden.
 
 Configuration is by environment variable, documented in the header of
 `run_hil_sweep.py`. The usual ones: `BOARD` (default `xilinx@192.168.2.99`),
