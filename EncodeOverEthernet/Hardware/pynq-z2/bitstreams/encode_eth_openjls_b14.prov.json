@@ -1,8 +1,8 @@
 {
- "sources_hash": "34c49836351e",
- "build_hash": "64a85a8e9031",
- "openjls_commit": "a6a5da062aa8",
- "demos_commit": "0144b3d8d6dc+dirty",
+ "sources_hash": "ec242ecd5e05",
+ "build_hash": "9335daea3cce",
+ "openjls_commit": "50892d8dc973",
+ "demos_commit": "66284b0befb7+dirty",
  "bitness": 14,
- "bit_sha256": "234ccc3f7805a758faf51266e4c9cd58d2cedad3304d373bdcf6de9b122802a5"
+ "bit_sha256": "bccd1f8e53b04fddfde3d7c3d699e7d0b5bfe7147868bf26be91f0f4e9af7e93"
 }

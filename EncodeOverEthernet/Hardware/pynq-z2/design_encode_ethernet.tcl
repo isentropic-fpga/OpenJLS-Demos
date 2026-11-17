@@ -134,7 +134,7 @@ xilinx.com:ip:processing_system7:5.5\
 xilinx.com:ip:axi_dma:7.1\
 xilinx.com:ip:smartconnect:1.0\
 xilinx.com:ip:proc_sys_reset:5.0\
-isentropic:openjls:openjls_axis_regs:1.5\
+isentropic:openjls:openjls_axis_regs:1.6\
 "
 
    set list_ips_missing ""
@@ -773,7 +773,7 @@ proc create_root_design { parentCell } {
 
 
   # Create instance: openjls_axis_regs_0, and set properties
-  set openjls_axis_regs_0 [ create_bd_cell -type ip -vlnv isentropic:openjls:openjls_axis_regs:1.5 openjls_axis_regs_0 ]
+  set openjls_axis_regs_0 [ create_bd_cell -type ip -vlnv isentropic:openjls:openjls_axis_regs:1.6 openjls_axis_regs_0 ]
   set_property -dict [list \
     CONFIG.BITNESS {8} \
     CONFIG.MAX_IMAGE_HEIGHT {65535} \

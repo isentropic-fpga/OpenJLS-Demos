@@ -48,7 +48,7 @@ set ip_repo [file join $openjls_dir Sources Xilinx ip_repo]
 if {![file isdirectory $ip_repo]} {
     error "Packaged IP repo not found at $ip_repo — run\
            \"git submodule update --init --recursive\" from the repo root. The\
-           block design instantiates isentropic:openjls:openjls_axis_regs:1.5,\
+           block design instantiates isentropic:openjls:openjls_axis_regs:1.6,\
            so OpenJLS v1.5 or later is required; the submodule is pinned at a\
            commit that provides it."
 }
