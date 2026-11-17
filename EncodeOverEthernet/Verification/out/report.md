@@ -2,19 +2,19 @@
 
 Each image encoded on the PYNQ-Z2 and byte-compared against CharLS; per-image results are in results.csv.
 
-OpenJLS v1.5.1 (version register), FCLK0 100 MHz.
+OpenJLS v1.6.0 (version register), FCLK0 100 MHz.
 
 | Depth | OpenJLS commit | Sources hash | Build hash |
 |--:|--|--|--|
-| 8 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
-| 9 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
-| 10 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
-| 11 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
-| 12 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
-| 13 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
-| 14 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
-| 15 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
-| 16 | a6a5da062aa8 | 34c49836351e | 64a85a8e9031 |
+| 8 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
+| 9 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
+| 10 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
+| 11 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
+| 12 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
+| 13 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
+| 14 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
+| 15 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
+| 16 | 50892d8dc973 | ec242ecd5e05 | 9335daea3cce |
 
 ## One image per reset
 
