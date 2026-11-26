@@ -25,3 +25,6 @@ EncodeOverEthernet/Hardware/pynq-z2/NA/
 .b*.prov.pending
 
 __pycache__/
+
+# Claude local instructions
+CLAUDE.local.md
